@@ -1,0 +1,165 @@
+---
+title: "descriptives_mcs"
+author: "Georgia Turner"
+date: "2023-04-27"
+output: html_document
+---
+
+In this script we answer RQ1: How prevalent is self-reported social media addiction among UK adolescents? To do so, as specified in the preregistration:
+
+We will group people into four categories according to which of the four responses they give
+to the ‘SMA’ question at Age 17, and a fifth category representing non-response to this
+question. To estimate the national prevalence of membership of each of these categories,
+we will apply both UK-wide sampling weights and non-response weights, as suggested in the
+MCS User Guide, Sweep 7 (Fitzsimons et al., 2020).
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())    # clear environment
+set.seed(20230427) # set seed for any random sampling
+
+```
+
+```{r load packages, include = FALSE}
+
+library(tidyverse)
+library(gt)
+
+```
+
+
+## Load in processed data.
+
+``` {r load data}
+
+datproc_path <- "./../data_processed/"
+dat          <- read_csv(str_c(datproc_path, "2025-07-07_20-03mcs_processed.csv"))
+
+```
+
+## Calculate prevalence without applying non-response weights
+
+``` {r preprocess for this analysis}
+
+# get rid of double rows for the same cohort member. There are two rows for the same CM where we have both a parent and a partner row of responses, but for this it shouldnt matter as it should always be the same
+dat <- dat %>% 
+  group_by(mcsid_cm) %>% 
+  slice(1)
+
+```
+
+
+``` {r calculate prevalence without NRW}
+
+# Unweighted prevalence as a data frame
+unweighted_prevalence <- table(dat$sma, useNA = "ifany")
+names(unweighted_prevalence)[is.na(names(unweighted_prevalence))] <- "Missing"
+
+unweighted_df <- data.frame(
+  sma = names(unweighted_prevalence),
+  unweighted_n = as.vector(unweighted_prevalence)
+)
+
+print(unweighted_df)
+```
+
+
+``` {r calculate prevalence with NRW}
+
+weighted_counts <- dat %>%
+  mutate(sma_group = ifelse(is.na(sma), "Missing", "Non-missing")) %>%
+  group_by(sma_group, sma) %>%
+  summarise(weighted_n = sum(govwt2, na.rm = TRUE), .groups = "drop") %>%
+  mutate(sma = ifelse(is.na(sma), "Missing", as.character(sma))) %>%
+  left_join(unweighted_df, by = "sma") %>%
+  group_by(sma_group) %>%
+  mutate(
+    unweighted_prevalence = unweighted_n / sum(unweighted_n),
+    weighted_prevalence = weighted_n / sum(weighted_n)) %>%
+  ungroup()
+
+print(weighted_counts)
+
+wighted_counts_table <- weighted_counts %>%
+  select(-sma_group) %>%
+  mutate(sma = factor(sma , 
+                      levels = c("Strongly agree", "Agree", 
+                                 "Disagree", "Strongly disagree", "Missing")),
+    weighted_n = round(weighted_n, 0),
+    unweighted_n = round(unweighted_n, 0),
+    unweighted_prevalence = round(unweighted_prevalence, 2),
+    weighted_prevalence = round(weighted_prevalence, 2)
+  ) %>%
+  arrange(sma)
+
+print(wighted_counts_table)
+
+# Save CSV
+write.csv(
+  wighted_counts_table,
+  str_c("summary_tables/", format(Sys.time(), "%Y%m%d_%H%M"), "_table1_sma_prevalence.csv"),
+  row.names = FALSE
+)
+
+
+```
+
+
+
+
+``` {r printed unweighted and weighted prevalence of Agree + Strongly Agree }
+
+cat(
+  "Unweighted prevalence of agree and strongly agree, given a response: ",
+  (unweighted_prevalence["Agree"] + unweighted_prevalence["Strongly agree"]) /
+    (unweighted_prevalence["Agree"] + unweighted_prevalence["Strongly agree"] +
+     unweighted_prevalence["Disagree"] + unweighted_prevalence["Strongly disagree"]),
+  "\nWeighted prevalence of agree and strongly agree, given a response: ",
+  sum(filter(weighted_counts, sma == "Agree" | sma == "Strongly agree")$weighted_prevalence),
+  "\n"
+)
+
+```
+Now, visualise.
+
+``` {r plot }
+
+sma_levels <- c("Strongly disagree", "Disagree", "Agree", "Strongly agree")
+
+
+weighted_counts_clean <- weighted_counts %>%
+  filter(sma_group == "Non-missing") %>%
+  mutate(
+    sma = factor(sma, levels = sma_levels, ordered = TRUE)
+  )
+
+Fig01a_plot <- ggplot(weighted_counts_clean, aes(x = sma, y = weighted_prevalence, fill = sma)) +
+  geom_col(alpha = 0.9) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(
+    values = c(
+      "Strongly agree" = "#B2182B",  # dark red
+      "Agree"          = "#E76A6A",  # lighter red
+      "Disagree"             = "#67A9CF",  # lighter blue
+      "Strongly disagree"    = "#2166AC"   # dark blue
+    ),
+    name = "SMA Response"
+  ) +
+  labs(
+    x = "Response to 'I think I am addicted to social media'",
+    y = "Prevalence (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5),         # centers the title
+    axis.title.x = element_text(margin = margin(t = 15))  # lowers x-axis label
+  )
+
+ggsave("figures/Fig01a.png", plot = Fig01a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+``` 
+
+

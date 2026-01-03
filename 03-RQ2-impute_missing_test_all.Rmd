@@ -1,0 +1,491 @@
+---
+title: "impute_missing_test_all"
+author: "Georgia Turner"
+date: "2023-04-27"
+output: html_document
+---
+
+In this script we convert all variables to Euclidean, exclude participants with too many variables missing and impute the variables for the rest. We save the result so it can be easily reloaded for subsequent analyses. 
+We also split into 60% v 30% training and testing.
+The clinicalMH subsets are for RQ2(ii) which we do if no noticeable clusters for RQ2i.
+
+We save four versions:
+
+1) train-all
+2) test-all
+3) train-clinicalMH
+4) test-clinicalMH
+
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())    # clear environment
+set.seed(20230427) # set seed for any random sampling
+
+# set which dataset to process
+
+which_dataset   <- "test" # or test
+subset_clinical <- "all" # "clinical" or "all" - determines whether to subset just those with clinical MH
+
+datproc_path <- "./../data_processed/"
+
+
+```
+
+```{r load packages}
+
+library(tidyverse)
+library(VIM) # for KNN imputation
+library(cluster) # for similarity matrix for multidimensional scaling analysis
+library(vegan) # for MDS
+library(mclust) # for gaussian mixture modelling
+library(fastDummies)
+
+
+```
+
+
+## Load in processed data.
+
+``` {r load data}
+
+dat_all     <- read_csv(str_c(datproc_path, "2025-07-20_12-26mcs_processed.csv"))
+
+```
+
+## First, we split into training and testing.
+
+``` {r split into training and testing, save both}
+
+# get unique MCSID (as some currently have two rows due to multiple parents and partners)
+dat_uniqueMCSID_CM <- dat_all %>%
+  group_by(mcsid_cm) %>%
+  slice(1) %>%
+  ungroup()
+
+# calculate how many for the training data - specified it would be 60%
+traindata_n <- round( 0.6 * nrow(dat_uniqueMCSID_CM) )
+
+# randomly sample the training data
+traindata_MCSID_CM <- dat_uniqueMCSID_CM %>%
+  sample_n(traindata_n, replace = FALSE) %>%
+  select(mcsid_cm)
+
+
+traindata <- dat_all %>% filter(mcsid_cm %in% traindata_MCSID_CM$mcsid_cm)
+testdata  <- dat_all %>% filter(!(mcsid_cm %in% traindata_MCSID_CM$mcsid_cm))
+
+
+write.csv(traindata, str_c(datproc_path, format(Sys.time(), "%Y-%m-%d_%H-%M"), "traindata.csv"), 
+          fileEncoding = "UTF-8",
+          row.names = FALSE)
+write.csv(testdata, str_c(datproc_path, format(Sys.time(), "%Y-%m-%d_%H-%M"), "testdata.csv"), 
+          fileEncoding = "UTF-8",
+          row.names = FALSE)
+
+```
+
+
+``` {r load data for use in further analyses}
+
+
+if (which_dataset == "train") {
+  
+  dat <- read_csv(str_c(datproc_path, "2025-07-20_12-30traindata.csv"))
+  
+} else if (which_dataset == "test") {
+  
+  dat <- read_csv(str_c(datproc_path, "2025-07-20_12-30testdata.csv"))
+
+}
+
+```
+
+Now we select the data for the behavioural-emotional profiles.
+First, we implement exclusion criteria - exclude participants with over 30% of variables missing
+
+``` {r identify participants with > 30% of variables missing}
+
+dat_exclude <- dat %>%
+  
+  # first select only the behavioural-emotional variables which will be considered
+  select(
+    
+    mcsid_cm,
+    
+    # Mental health
+    kessl_depression,
+    warwick_wellbeing,
+    self_esteem_1, self_esteem_2, self_esteem_3, self_esteem_4, self_esteem_5,
+    clin_dep_anx,
+    self_harm_1, self_harm_2, self_harm_3, self_harm_4, self_harm_5, self_harm_6,
+    suic_attempt,
+    cm_sdq_emotion, cm_sdq_conduct, cm_sdq_hyper, cm_sdq_peer, cm_sdq_prosoc,
+    pa_sdq_emotion, pa_sdq_conduct, pa_sdq_hyper, pa_sdq_peer, pa_sdq_prosoc,
+    
+    # Personality and Iientity
+    personality_open, personality_conscientious, personality_extravert, personality_agreeable, personality_neurot,
+    self_control, 
+    risk_pref_01, risk_pref_02, risk_pref_03, risk_pref_04, risk_pref_05, risk_pref_06, risk_pref_07, risk_pref_08, risk_pref_09, risk_pref_10,
+    time_pref_01, time_pref_02, time_pref_03, time_pref_04, time_pref_05, time_pref_06, time_pref_07, time_pref_08, time_pref_09, time_pref_10,
+    sexuality,
+    
+    # Peer relationships
+    social_provision_safe_happy, social_provision_trust, social_provision_noone_close,
+    victimisation_insults, victimisation_gossip, victimisation_violence, victimisation_weapon, victimisation_theft,
+    victimisation_harass, victimisation_pics, victimisation_sexapproach, victimisation_sexapproach,
+    
+    # Family relationships
+    n_parents,
+    n_siblings,
+    livewith_parents,
+    caring_responsibility,
+     # for these parent ones they may differ for parent and partner but we took the maximum or mean of the two parents during preprocessing so now they 
+    # will be the same for each parent
+    par_reported_closeness,
+    par_reported_talking,
+    par_reported_monitoring,
+    par_reported_curfew,
+    
+    # Behaviours
+    doing_with_time,
+    sex_intercourse,
+    smoking,
+    vaping,
+    alcohol,
+    drug_cannabis, drug_cocaine, drug_lsd, drug_ecstasy, drug_speed, drug_semeron, drug_ket, drug_meph, drug_psychoact,
+    risky_shoplift, risky_graffiti, risky_vandal, risky_robhome, risky_robvehicle, risky_fire, risky_creditcard, risky_hack, risky_webvirus,
+    antisocial_hit, antisocial_weapon, antisocial_theft, antisocial_webharass, antisocial_webpics, antisocial_sexual, 
+    exercise,
+    sleep_quality,
+    activity_party, activity_theatre, activity_watchsport, activity_music, activity_gig, activity_read, activity_organised,
+    activity_library, activity_museum, activity_volunteering, activity_political, activity_religious, activity_friends,
+    television_hrs, 
+    gaming_hrs,
+    gambling_1, gambling_2, gambling_3, gambling_4,
+    weapon_carry,
+    gang_member,
+    police_warning,
+    police_arrest) %>%
+  
+  group_by(mcsid_cm) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # Add column indicating if >70% non-missing
+  mutate(
+  valid_row = rowSums(!is.na(across(-mcsid_cm))) / (ncol(across(-mcsid_cm))) > 0.7
+  ) 
+
+dat_retain <- dat_exclude %>%
+  filter(valid_row == TRUE) %>% 
+  select(-valid_row)
+
+print(str_c("MCSID_CM included: ", length(unique(dat_retain$mcsid_cm)), ", MCSID_CM excluded: ", sum(dat_exclude$valid_row == FALSE)))
+  
+
+
+``` 
+Quite a lot of people were excluded. As we don't want to lower the threshold of 30% missingness, we instead will check if deleting specific measures can decrease missingness.
+
+``` {r identify which variables are most responsible for missing data}
+
+# Count NAs per column
+na_counts <- sapply(dat_exclude, function(x) sum(is.na(x)))
+
+# Create a data frame and sort in descending order
+na_summary <- data.frame(
+  Variable = names(na_counts),
+  NAs = na_counts,
+  stringsAsFactors = FALSE
+)
+
+# Sort by most NAs
+na_summary <- na_summary[order(-na_summary$NAs), ]
+
+# Show the result
+print(na_summary)
+
+
+
+``` 
+
+``` {r practise excluding variables and seeing how that changes missing data}
+
+vars_to_exclude <- c("time_pref_10", "risk_pref_10", "time_pref_9", "risk_pref_9",
+                     "time_pref_8", "risk_pref_8", "time_pref_7", "risk_pref_7",
+                     "time_pref_6", "risk_pref_6", "caring_responsibility", "social_provision_noone_close")
+
+dat_exclude_shortened <- dat_exclude[ , !(names(dat_exclude) %in% vars_to_exclude)]
+
+dat_retain_shortened <- dat_exclude_shortened %>%
+  filter(valid_row == TRUE) %>% 
+  select(-valid_row)
+
+print(str_c("MCSID_CM included: ", length(unique(dat_retain_shortened$mcsid_cm)), ", MCSID_CM excluded: ", sum(dat_exclude_shortened$valid_row == FALSE)))
+
+
+``` 
+
+After checking whether removing specific measures altered missingness, we found they didn't (i.e. no changed to MCSID_CM included with shortened df). We therefore continue without excluding any measures.
+
+Now we impute missing values for the missing variables for CMs we didn't exclude.
+
+First, we pre-process the dataset.
+
+This involves:
+
+1) convert the factors which can be ordered to ordered factors 
+2) convert all ordered factors to numeric
+3) standardise all numerical variables (originally numerical ones and ordered factors)
+4) convert factors to dummy variables 
+5) remove redundant columns, i.e. columns with all values the same as they dont include inter-individual variation. Note that in practice this means that different datasets will have different numbers of columns if they had e.g. different columns where all values were the same.
+
+Note that this means that all variables will end up numerical, but the categorical factor ones won't be standardised and will just take values of either 0 and 1, without the mean of 0 / sd of 1 of the numerical variables. 
+
+We are making everything numerical because the imputation and subsequent MDS steps will use Euclidean distance. Another option is to use mixed variable types and then Gower distance but we chose to keep with Euclidean.
+
+So 1):
+
+``` {r convert ordered factors to ordered then numeric}
+
+
+dat_preproc <- dat_retain
+
+# convert variables into numeric, ordered factor or (non-ordered) factor
+dat_preproc[sapply(dat_retain, is.character)] <- lapply(dat_retain[sapply(dat_retain, is.character)], as.factor)
+
+######################### make some factors ordered ######################### 
+
+### define ordered levels
+
+agree_ordered_levels <- c("Strongly disagree", "Disagree", "Agree", "Strongly agree")
+true_ordered_levels  <- c("Not true at all", "Partly true", "Very true")
+close_levels         <- c("Not very close", "Fairly close", "Very close", "Extremely close")
+talkfrequency_levels <- c("Not at all", "Less often than once a month", "Once or twice a month", 
+                          "Once or twice a week",  "Several times a week", "Every day or almost every day")
+monitorfrequency_levels <- c("Never", "Sometimes", "Usually", "Always")
+smoking_levels       <- c(
+  "I have never smoked cigarettes",
+  "I have only ever tried smoking cigarettes once",
+  "I used to smoke sometimes but I never smoke a cigarette now",
+  "I sometimes smoke cigarettes now but I don’t smoke as many as one a week",
+  "I usually smoke between one and six cigarettes a week",
+  "I usually smoke more than six cigarettes a week"
+)
+vaping_levels        <- c(
+  "I have never tried an e-cigarette or vaping device",
+  "I have only ever tried an e-cigarette or vaping device once",
+  "I used to use an e-cigarette or vaping device sometimes but I never use an e-cigarette or vaping device now",
+  "I sometimes use an e-cigarette or vaping device now but I don’t use an e-cigarette or vaping device as often as one a week",
+  "I usually use an e-cigarette or vaping device between one and six times a week",
+  "I usually use an e-cigarette or vaping device more than six times a week"
+)
+exercise_levels      <- c( "Not at all", "1-2 days", "3-4 days", "5-6 days", "Every day" )
+sleepqual_levels     <- c("...Very bad?", "...Fairly bad, or", "...Fairly good", "...Very good")
+activity_levels      <- c(
+  "Never or almost never",
+  "Once a year or less",
+  "Several times a year",
+  "At least once a month",
+  "At least once a week",
+  "Most days"
+) 
+time_levels <- c(
+  "None",
+  "Less than half an hour",
+  "Half an hour to less than 1 hour",
+  "1 hour to less than 2 hours",
+  "2 hours to less than 3 hours",
+  "3 hours to less than 5 hours",
+  "5 hours to less than 7 hours",
+  "7 hours to less than 10 hours",
+  "10 hours or more"
+)
+
+# Convert each variable to an ordered factor
+self_esteem_cols <- grep("^self_esteem_", names(dat_preproc), value = TRUE)
+dat_preproc[self_esteem_cols] <- lapply(dat_preproc[self_esteem_cols], function(x) {
+  factor(x, levels = agree_ordered_levels, ordered = TRUE)
+})
+
+social_provision_cols <- grep("^social_provision_", names(dat_preproc), value = TRUE)
+dat_preproc[social_provision_cols] <- lapply(dat_preproc[social_provision_cols], function(x) {
+  factor(x, levels = true_ordered_levels, ordered = TRUE)
+})
+
+### convert relevant factors to ordered using levels
+
+dat_preproc$par_reported_closeness      <- factor(dat_preproc$par_reported_closeness, levels = close_levels, ordered = TRUE)
+
+dat_preproc$par_reported_talking        <- factor(dat_preproc$par_reported_talking, levels = talkfrequency_levels, ordered= TRUE)
+
+dat_preproc$par_reported_monitoring     <- factor(dat_preproc$par_reported_monitoring, levels = monitorfrequency_levels, ordered = TRUE)
+dat_preproc$par_reported_curfew         <- factor(dat_preproc$par_reported_curfew, levels = monitorfrequency_levels, ordered = TRUE)
+
+dat_preproc$smoking                     <- factor(dat_preproc$smoking, levels = smoking_levels, ordered = TRUE)
+
+dat_preproc$vaping                      <- factor(dat_preproc$vaping, levels = vaping_levels, ordered = TRUE)
+
+dat_preproc$exercise                    <- factor(dat_preproc$exercise, levels = exercise_levels, ordered = TRUE)
+
+dat_preproc$sleep_quality               <- factor(dat_preproc$sleep_quality, levels = sleepqual_levels, ordered = TRUE)
+
+activity_cols <- grep("^activity_", names(dat_preproc), value = TRUE)
+dat_preproc[activity_cols] <- lapply(dat_preproc[activity_cols], function(x) {
+  factor(x, levels = activity_levels, ordered = TRUE)
+})
+
+dat_preproc$television_hrs              <- factor(dat_preproc$television_hrs, levels = time_levels, ordered = TRUE)
+dat_preproc$gaming_hrs                  <- factor(dat_preproc$gaming_hrs, levels = time_levels, ordered = TRUE)
+
+``` 
+
+
+2) Convert ordered factors to numeric
+
+
+``` {r convert ordered factors to numeric}
+
+
+######################### convert ordered factors to numeric ######################### 
+
+convert_ordered_numeric <- function(df) {
+  df[] <- lapply(df, function(col) {
+    if (is.ordered(col)) {
+      as.numeric(col)
+    } else {
+      col
+    }
+  })
+  return(df)
+}
+
+dat_ordered_numeric <- convert_ordered_numeric(dat_preproc)
+
+``` 
+
+
+3) Standardise all numeric variables (i.e. now including previous ordered factors but not factors) (BEFORE converting factors to numeric).
+
+``` {r standardise numerical and ordered variables}
+
+######################### standardise numerical variables  ######################### 
+
+dat_scaled <- dat_ordered_numeric
+
+num_cols   <- sapply(dat_scaled, function(x) is.numeric(x) || is.integer(x))
+
+# Standardize these columns
+dat_scaled[num_cols] <- lapply(dat_scaled[num_cols], function(x) {
+  if (all(is.na(x))) return(x)  # leave all-NA columns unchanged
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+})
+
+
+```
+
+4) Convert unordered categorical factor variables to dummy.
+Note that although we remove the first dummy in the conversion, there still comes out with some multicollinearity, for example in the self harm question, the levels are 'No', 'Yes' and 'I do not wish to answer'. As 'I do not wish to answer' is the first 'level', this is removed in the dummy conversion. However, this means that both 'No' and 'Yes' are retained as they are not exact anti-correlations of each other (they will both be 0 when 'I do not wish to answer' was yes).
+
+
+``` {r pre-processing}
+
+
+# Function to transform the data
+create_dummy_variables <- function(df) {
+
+  # Identify unordered factor columns, excluding 'mcsid_cm'
+  unordered_factors <- names(Filter(function(x) is.factor(x) && !is.ordered(x), select(df, -mcsid_cm)))
+  
+  # change order of factors in df so that 'No' comes first, so that when you remove first dummy you remove 'the most frequent one, so more likely to reduce collinearity than if you remove the 'No' which improves interpretability when results are plotted
+  df <- df %>%
+  mutate(across(
+    where(is.factor),
+    ~ if ("No" %in% levels(.x)) {
+        fct_relevel(.x, "No")
+      } else {
+        fct_infreq(.x)
+      }
+  ))
+
+  # Create dummy variables
+  dat_dummies <- dummy_cols(
+    df,
+    select_columns = unordered_factors,
+    remove_selected_columns = TRUE,
+    remove_first_dummy = TRUE,
+    ignore_na = TRUE
+  )
+  
+    # Replace spaces in column names with underscores
+  names(dat_dummies) <- gsub(" ", "_", names(dat_dummies))
+
+  return(dat_dummies)
+}
+
+# Apply the function
+dat_converted <- create_dummy_variables(dat_scaled)
+
+
+``` 
+
+5) Remove redundant columns
+
+
+``` {r remove redundant cols}
+
+
+dat_transformed <- dat_converted
+
+
+# remove cols with no values- i.e. with no SD because all values were the same
+
+cols_with_missing <- colnames(dat_scaled)[apply(dat_transformed, 2, function(x) all(is.na(x) | is.nan(x)))]
+
+# Print the names of removed variables
+cat("Removed columns due to no SD:\n")
+print(cols_with_missing)
+
+# Select only columns without missing values
+dat_clean <- dat_transformed[, !(colnames(dat_transformed) %in% cols_with_missing)]
+
+
+
+``` 
+
+Now do KNN imputation. Note that this step takes a few minutes to process (approx 6.5 mins).
+
+``` {r KNN imputation}
+
+
+dat_imputed <- kNN(dat_clean, 
+                   variable = colnames(select(dat_clean, -mcsid_cm)),  
+                   k        = 25,
+                   dist_var = colnames(select(dat_clean, -mcsid_cm)) 
+)
+
+
+# remove the new columns which say if it was imputed
+dat_imputed <- dat_imputed[ , !grepl("_imp$", names(dat_imputed))]
+
+``` 
+
+
+Now we save the dataset.
+
+``` {r Save}
+
+# get filename
+savename <- str_c(which_dataset, "-", subset_clinical)
+
+# save
+write.csv(dat_imputed, str_c(datproc_path, format(Sys.time(), "%Y-%m-%d_%H-%M"),savename, "-imputed.csv"), 
+          fileEncoding = "UTF-8",
+          row.names = FALSE)
+
+
+```
+
+
+
+

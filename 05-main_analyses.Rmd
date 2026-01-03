@@ -1,0 +1,2714 @@
+---
+title: "main_analyses_mcs"
+author: "Georgia Turner"
+date: "2023-04-27"
+output: html_document
+---
+
+In this script we answer RQ2 onwards.
+
+First, set up document:
+
+```{r setup}
+
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())    # clear environment
+set.seed(20230427) # set seed for any random sampling
+
+```
+
+```{r load packages}
+
+library(tidyverse)
+#library(VIM) # for KNN imputation
+library(cluster) # for similarity matrix for multidimensional scaling analysis
+library(vegan) # for MDS
+library(mclust) # for gaussian mixture modelling
+library(fclust) # for fuzzy clustering
+library(glmnet)
+library(fastDummies)
+library(officer)
+library(flextable)
+
+source('00-functions.R')
+
+```
+First we define some plotting parameters like variable renaming and colour scheme to add to plots throughout.
+
+```{r define plotting parameters}
+
+
+
+var_renames <- c(
+  # --- Mental health & wellbeing ---
+  "kessl_depression"          = "Kessler Depression",
+  "warwick_wellbeing"         = "Warwick Wellbeing",
+  "self_esteem_1"             = "Self esteem: Satisfied",
+  "self_esteem_2"             = "Self esteem: Good qualities",
+  "self_esteem_3"             = "Self esteem: Competent",
+  "self_esteem_4"             = "Self esteem: Valuable person",
+  "self_esteem_5"             = "Self esteem: Feel good about self",
+  
+  # --- SDQ self-report ---
+  "cm_sdq_emotion"            = "Self SDQ: Emotional symptoms",
+  "cm_sdq_conduct"            = "Self SDQ: Conduct problems",
+  "cm_sdq_hyper"              = "Self SDQ: Hyperactivity",
+  "cm_sdq_peer"               = "Self SDQ: Peer problems",
+  "cm_sdq_prosoc"             = "Self SDQ: Prosocial behaviour",
+  
+  # --- SDQ parent-report ---
+  "pa_sdq_emotion"            = "Parent SDQ: Emotional symptoms",
+  "pa_sdq_conduct"            = "Parent SDQ: Conduct problems",
+  "pa_sdq_hyper"              = "Parent SDQ: Hyperactivity",
+  "pa_sdq_peer"               = "Parent SDQ: Peer problems",
+  "pa_sdq_prosoc"             = "Parent SDQ: Prosocial behaviour",
+  
+  # --- Personality & self-control ---
+  "personality_open"          = "Openness",
+  "personality_conscientious" = "Conscientiousness",
+  "personality_extravert"     = "Extraversion",
+  "personality_agreeable"     = "Agreeableness",
+  "personality_neurot"        = "Neuroticism",
+  "self_control"              = "Self control",
+  
+  # --- Social support & family ---
+  "social_provision_safe_happy" = "Feels safe and happy",
+  "social_provision_trust"      = "Trust in others",
+  "social_provision_noone_close"= "No one close to talk to",
+  "n_siblings"                  = "Number of siblings",
+  "par_reported_closeness"      = "Parental closeness",
+  "par_reported_talking"        = "Parental communication",
+  "par_reported_monitoring"     = "Parental monitoring",
+  "par_reported_curfew"         = "Parental curfew rules",
+  
+  # --- Lifestyle & health behaviours ---
+  "smoking"                    = "Smokes cigarettes",
+  "vaping"                     = "Vapes",
+  "exercise"                   = "Exercise frequency",
+  "sleep_quality"              = "Sleep quality",
+  
+  # --- Activities & hobbies ---
+  "activity_party"             = "Frequency of partying",
+  "activity_theatre"           = "Frequency of Theatre",
+  "activity_watchsport"        = "Frequency of watching sport",
+  "activity_music"             = "Frequency of playing music",
+  "activity_gig"               = "Frequency attending gigs",
+  "activity_read"              = "Frequency of reading",
+  "activity_organised"         = "Frequency of organised group activity",
+  "activity_library"           = "Frequency of library visits",
+  "activity_museum"            = "Frequency of museum visits",
+  "activity_volunteering"      = "Frequency of volunteering",
+  "activity_political"         = "Frequency of political engagement",
+  "activity_religious"         = "Frequency of religious activity",
+  "activity_friends"           = "Frequency of seeing friends",
+  
+  # --- Media & tech ---
+  "television_hrs"             = "Television hours",
+  "gaming_hrs"                 = "Gaming hours",
+  
+  # --- Clinical & self-harm ---
+  "clin_dep_anx_Yes"           = "Clinical depression/anxiety",
+  "self_harm_1_I_do_not_wish_to_answer" = "Self-harm Q1: Prefer not to say",
+  "self_harm_1_Yes"            = "Self-harm Q1: Yes",
+  "self_harm_2_I_do_not_wish_to_answer" = "Self-harm Q2: Prefer not to say",
+  "self_harm_2_Yes"            = "Self-harm Q2: Yes",
+  "self_harm_3_I_do_not_wish_to_answer" = "Self-harm Q3: Prefer not to say",
+  "self_harm_3_Yes"            = "Self-harm Q3: Yes",
+  "self_harm_4_I_do_not_wish_to_answer" = "Self-harm Q4: Prefer not to say",
+  "self_harm_4_Yes"            = "Self-harm Q4: Yes",
+  "self_harm_5_I_do_not_wish_to_answer" = "Self-harm Q5: Prefer not to say",
+  "self_harm_5_Yes"            = "Self-harm Q5: Yes",
+  "self_harm_6_I_do_not_wish_to_answer" = "Self-harm Q6: Prefer not to say",
+  "self_harm_6_Yes"            = "Self-harm Q6: Yes",
+  "suic_attempt_Yes"           = "Suicide attempt: Yes",
+  
+  # --- Risk preferences ---
+  "risk_pref_01_A_50-50_chance_of_£240" = "Risk pref 1: Uncertain option",
+  "risk_pref_02_A_50-50_chance_of_£240" = "Risk pref 2: Uncertain option",
+  "risk_pref_03_A_50-50_chance_of_£240" = "Risk pref 3: Uncertain option",
+  "risk_pref_04_A_50-50_chance_of_£240" = "Risk pref 4: Uncertain option",
+  "risk_pref_05_A_50-50_chance_of_£240" = "Risk pref 5: Uncertain option",
+  "risk_pref_06_A_50-50_chance_of_£240" = "Risk pref 6: Uncertain option",
+  "risk_pref_07_A_50-50_chance_of_£240" = "Risk pref 7: Uncertain option",
+  "risk_pref_08_£48_for_certain"        = "Risk pref 8: Certain option",
+  "risk_pref_09_£36_for_certain"        = "Risk pref 9: Certain option",
+  "risk_pref_10_£24_for_certain"        = "Risk pref 10: Certain option",
+  
+  # --- Time preferences ---
+  "time_pref_01_£50_in_four_months"     = "Time pref 1: Delayed reward",
+  "time_pref_02_£52_in_four_months"     = "Time pref 2: Delayed reward",
+  "time_pref_03_£55_in_four_months"     = "Time pref 3: Delayed reward",
+  "time_pref_04_£60_in_four_months"     = "Time pref 4: Delayed reward",
+  "time_pref_05_£70_in_four_months"     = "Time pref 5: Delayed reward",
+  "time_pref_06_£80_in_four_months"     = "Time pref 6: Delayed reward",
+  "time_pref_07_£90_in_four_months"     = "Time pref 7: Delayed reward",
+  "time_pref_08_£50_in_two_months"      = "Time pref 8: Immediate reward",
+  "time_pref_09_£50_in_two_months"      = "Time pref 9: Immediate reward",
+  "time_pref_10_£50_in_two_months"      = "Time pref 10: Immediate reward",
+  
+  # --- Sexual orientation ---
+  "sexuality_Mainly_heterosexual/_straight" = "Mainly heterosexual",
+  "sexuality_Bisexual"                     = "Bisexual",
+  "sexuality_Completely_gay_or_lesbian"    = "Completely gay/lesbian",
+  "sexuality_Other"                        = "Sexuality: Other",
+  "sexuality_Mainly_gay_or_lesbian"        = "Mainly gay/lesbian",
+  "sexuality_Prefer_not_to_say"            = "Sexuality: Prefer not to say",
+  "sexuality_Do_not_know"                  = "Sexuality: Don't know",
+  
+  # --- Victimisation ---
+  "victimisation_insults_Yes"     = "Victim: Insults",
+  "victimisation_gossip_Yes"      = "Victim: Gossip",
+  "victimisation_violence_Yes"    = "Victim: Violence",
+  "victimisation_weapon_Yes"      = "Victim: Threatened with weapon",
+  "victimisation_theft_Yes"       = "Victim: Theft",
+  "victimisation_harass_Yes"      = "Victim: Harassment",
+  "victimisation_pics_Yes"        = "Victim: Pictures shared",
+  "victimisation_sexapproach_Yes" = "Victim: Sexual approach",
+  
+  # --- Family & living situation ---
+  "n_parents_One_parent/carer"    = "One parent/carer",
+  "livewith_parents_Yes"          = "Lives with parents",
+  "caring_responsibility_Yes"     = "Caring responsibilities",
+  
+  # --- Current activity/status ---
+  "doing_with_time_SCHOOL_AND_WORK"             = "School and work",
+  "doing_with_time_SCHOOL_AND_TRAINING"         = "School and training",
+  "doing_with_time_JOB"                         = "Employed (job)",
+  "doing_with_time_APPRENTICESHIP"              = "Apprenticeship",
+  "doing_with_time_UNEMPLOYED_AND_SEARCHING_FOR_PAID_WORK" = "Unemployed, seeking work",
+  "doing_with_time_NO_CURRENT_ACTIVITY"         = "No current activity",
+  "doing_with_time_TRAINING"                    = "Training only",
+  "doing_with_time_LOOKING_AFTER_HOME_OR_FAMILY_FULL_TIME" = "Caring full-time",
+  
+  # --- Risky & antisocial behaviour ---
+  "sex_intercourse_Yes"          = "Had sexual intercourse",
+  "alcohol_Yes"                  = "Consumes alcohol",
+  "drug_cannabis_Yes"            = "Used cannabis",
+  "drug_cocaine_Yes"             = "Used cocaine",
+  "drug_lsd_Yes"                 = "Used LSD",
+  "drug_ecstasy_Yes"             = "Used ecstasy",
+  "drug_speed_Yes"               = "Used amphetamines",
+  "drug_semeron_Yes"             = "Used semeron",
+  "drug_ket_Yes"                 = "Used ketamine",
+  "drug_meph_Yes"                = "Used mephedrone",
+  "drug_psychoact_Yes"           = "Used psychoactive substances",
+  
+  # --- Risky behaviours ---
+  "risky_shoplift_Yes"           = "Risky: Shoplifting",
+  "risky_graffiti_Yes"           = "Risky: Graffiti",
+  "risky_vandal_Yes"             = "Risky: Vandalism",
+  "risky_robhome_Yes"            = "Risky: Home robbery",
+  "risky_robvehicle_Yes"         = "Risky: Vehicle theft",
+  "risky_fire_Yes"               = "Risky: Fire setting",
+  "risky_creditcard_Yes"         = "Risky: Credit card fraud",
+  "risky_hack_Yes"               = "Risky: Hacking",
+  "risky_webvirus_Yes"           = "Risky: Sent web virus",
+  
+  # --- Antisocial behaviour ---
+  "antisocial_hit_Yes"           = "Antisocial: Physical fight",
+  "antisocial_weapon_Yes"        = "Antisocial: Weapon use",
+  "antisocial_theft_Yes"         = "Antisocial: Theft",
+  "antisocial_webharass_Yes"     = "Antisocial: Online harassment",
+  "antisocial_webpics_Yes"       = "Antisocial: Sharing images",
+  "antisocial_sexual_Yes"        = "Antisocial: Sexual offence",
+  
+  # --- Gambling, gangs, and crime ---
+  "gambling_1_Yes"               = "Gambling: Fruit machines",
+  "gambling_2_Yes"               = "Gambling: Private/friendly bet",
+  "gambling_3_Yes"               = "Gambling: Betting shop",
+  "gambling_4_Yes"               = "Gambling: Other or online",
+  "weapon_carry_Yes"             = "Carried weapon",
+  "gang_member_I_used_to_be_a_member_but_not_any_more" = "Former gang member",
+  "gang_member_Yes"              = "Current gang member",
+  "police_warning_Yes"           = "Received police warning",
+  "police_arrest_Yes"            = "Arrested by police"
+)
+
+highSMA_cluster_colours <- c(
+  "1" = "#B34CC2",  # rich purple
+  "2"  = "#6BCB3D",  # lighter, fresher green
+  "3" = "#F4A300"   # slightly more yellowy orange
+)
+all_cluster_colours <- c(
+  "1" = "#FFB6C1", 
+  "2"  = "#654321"  
+
+)
+
+
+```
+
+
+Load in processed data & create datasets.
+
+``` {r load data}
+
+datproc_path <- "./../data_processed/"
+
+dat_NotImputed    <- read_csv(str_c(datproc_path, "2025-07-28_11-00mcs_processed.csv"))
+
+## datasets with all in
+dat_imputed_all_train <- read_csv(str_c(datproc_path, "2025-08-21_13-08train-all-imputed.csv"))
+dat_imputed_all_test  <- read_csv(str_c(datproc_path,  "2025-08-21_13-12test-all-imputed.csv"))
+
+## datasets with just high SMA
+mcsid_cm_SMA    <- dat_NotImputed %>%
+  filter(!is.na(sma)) %>%
+  dplyr::select(mcsid_cm, sma)
+
+### train
+# first filter to answered the SMA question 
+dat_imputed_SMA_train         <- filter(dat_imputed_all_train, mcsid_cm %in% mcsid_cm_SMA$mcsid_cm) %>%
+  left_join(mcsid_cm_SMA, by = "mcsid_cm") 
+# Then separate by the answer
+dat_imputed_highSMA_train     <- filter(dat_imputed_SMA_train, sma == "Agree" | sma == "Strongly agree") %>%
+  dplyr::select(-sma)
+dat_imputed_lowSMA_train      <- filter(dat_imputed_SMA_train, sma == "Disagree" | sma == "Strongly disagree") %>%
+  dplyr::select(-sma)
+
+### test
+# first filter to answered the SMA question 
+dat_imputed_SMA_test          <- filter(dat_imputed_all_test, mcsid_cm %in% mcsid_cm_SMA$mcsid_cm) %>%
+  left_join(mcsid_cm_SMA, by = "mcsid_cm") 
+# Then separate by the answer
+dat_imputed_highSMA_test      <- filter(dat_imputed_SMA_test, sma == "Agree" | sma == "Strongly agree") %>%
+  dplyr::select(-sma)
+dat_imputed_lowSMA_test       <- filter(dat_imputed_SMA_test, sma == "Disagree" | sma == "Strongly disagree") %>%
+  dplyr::select(-sma)
+
+
+```
+
+In the previous analyses we examined different dimensionality reduction and clustering parameters, and established that clusters emerge in the training dataset, for both all and high SMA, at dimensionality reduction to 2 MDS dimensions, with 2 clusters providing separation using Gaussian mixture modelling for all, and 3 clusters for high SMA.
+
+Therefore, in this script we perform clustering using these analysis variables. 
+
+Now, we will cluster each dataset by performing MDS (2 dimensions) and then Gaussian Mixture modelling (2 clusters for all, 3 clusters for high SMA)  - these parameters were based on data-driven analyses in the R scripts 'exploring clustering parameters...'
+
+First we do MDS.
+
+```{r perform MDS all}
+
+set.seed(2)
+
+#### now perform for all
+
+dat_imputed_all_train_mds       <- perform_mds_train(dat_imputed_all_train, remove_cols = "mcsid_cm")
+dat_imputed_all_test_mds_points <- project_mds_test(
+  train_data  = dat_imputed_all_train, 
+  test_data   = dat_imputed_all_test,
+  mds_result  = dat_imputed_all_train_mds,
+  remove_cols = "mcsid_cm"
+)
+
+dat_imputed_highSMA_train_mds       <- perform_mds_train(dat_imputed_highSMA_train, remove_cols = "mcsid_cm")
+# flip dimensions as on inspection if they are flipped they are more similar to the dimensions in the 'All' dataset, and MDS is invariant to reflection so that should be fine.
+dat_imputed_highSMA_train_mds       <- flip_mds_dimensions(dat_imputed_highSMA_train_mds)
+dat_imputed_highSMA_test_mds_points <- project_mds_test(
+  train_data  = dat_imputed_highSMA_train, 
+  test_data   = dat_imputed_highSMA_test,
+  mds_result  = dat_imputed_highSMA_train_mds,
+  remove_cols = "mcsid_cm"
+)
+
+
+```
+
+Compare MDS dimensions for all:
+
+```{r mds all feature loading}
+
+
+set.seed(55)
+
+varCorrs_all <- plot_mds_variable_correlations(
+  mds_train = dat_imputed_all_train_mds$points,
+  mds_test  = dat_imputed_all_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_all_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_all_test, -mcsid_cm),
+  title_train = "All Train",
+  title_test  = "All Test"
+)
+
+FigS02a_plot <-  plot_mds_variable_correlations(
+  mds_train = dat_imputed_all_train_mds$points,
+  mds_test  = dat_imputed_all_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_all_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_all_test, -mcsid_cm),
+  title_train = "",
+  title_test  = "",
+    top_n = 30,
+
+  rename_vars = TRUE,
+  var_name_map = 
+    var_renames
+)$p_test
+
+ggsave("figures/FigS02a.png", plot = FigS02a_plot, bg = "white",  width = 7, height = 4.5, units = "in")
+
+FigS03a_plot <-  plot_mds_variable_correlations(
+  mds_train = dat_imputed_all_train_mds$points,
+  mds_test  = dat_imputed_all_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_all_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_all_test, -mcsid_cm),
+  title_train = "",
+  title_test  = "",
+  rename_vars = TRUE,
+  var_name_map = 
+    var_renames
+)$p_test
+
+ggsave("figures/FigS03a.png", plot = FigS03a_plot, bg = "white",  width = 7, height = 20, units = "in")
+
+```
+Now for high SMA
+
+```{r mds highSMA feature loading}
+
+set.seed(55)
+
+plot_mds_variable_correlations(
+  mds_train = dat_imputed_highSMA_train_mds$points,
+  mds_test  = dat_imputed_highSMA_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_highSMA_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_highSMA_test, -mcsid_cm),
+  title_train = "highSMA Train",
+  title_test  = "highSMA Test"
+)
+
+Fig02a_plot <-  plot_mds_variable_correlations(
+  mds_train = dat_imputed_highSMA_train_mds$points,
+  mds_test  = dat_imputed_highSMA_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_highSMA_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_highSMA_test, -mcsid_cm),
+  title_train = "",
+  title_test  = "",
+  top_n = 30,
+  rename_vars = TRUE,
+  var_name_map = 
+    var_renames
+  )$p_test
+
+
+ggsave("figures/Fig02a.png", plot = Fig02a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+FigS03b_plot <-  plot_mds_variable_correlations(
+  mds_train = dat_imputed_highSMA_train_mds$points,
+  mds_test  = dat_imputed_highSMA_test_mds_points,
+  vars_train = dplyr::select(dat_imputed_highSMA_train, -mcsid_cm),
+  vars_test  = dplyr::select(dat_imputed_highSMA_test, -mcsid_cm),
+  title_train = "",
+  title_test  = "",
+  rename_vars = TRUE,
+  var_name_map = 
+    var_renames
+)$p_test
+
+ggsave("figures/FigS03b.png", plot = FigS03b_plot, bg = "white",  width = 7, height = 20, units = "in")
+
+
+```
+
+
+
+Now we apply Gaussian mixture modelling to cluster each dataset.
+Note that we relabel all clusters so that cluster 1 has highest wellbeing, to ease comparability across datasets.
+
+
+``` {r perform gaussian mixture modelling with 2 clusters}
+
+# Perform GMM
+
+set.seed(57)
+
+# Fit GMM models
+
+dat_imputed_all_train_gmm2 <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_all_train_mds$points, warwick_wellbeing = dat_imputed_all_train$warwick_wellbeing, G = 2)
+dat_imputed_all_test_gmm2  <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_all_test_mds_points, warwick_wellbeing = dat_imputed_all_test$warwick_wellbeing, G = 2)
+
+dat_imputed_highSMA_train_gmm3 <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_highSMA_train_mds$points, warwick_wellbeing = dat_imputed_highSMA_train$warwick_wellbeing, G = 3)
+dat_imputed_highSMA_test_gmm3  <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_highSMA_test_mds_points, warwick_wellbeing = dat_imputed_highSMA_test$warwick_wellbeing, G = 3)
+
+
+
+```
+
+Report results:
+
+``` {r report results of clusters and coefficients}
+
+# ===============================
+# Collect all outputs
+# ===============================
+
+output <- ""
+
+# --- ALL ---
+output <- paste0(output,
+  report_clusters(dat_imputed_all_train_gmm2, dat_imputed_all_test_gmm2,
+                  dat_imputed_all_train, dat_imputed_all_test,
+                  "all gmm2"),
+  report_silhouette(dat_imputed_all_train_gmm2, dat_imputed_all_test_gmm2,
+                    dat_imputed_all_train_mds, dat_imputed_all_test_mds_points,
+                    "all gmm2")
+)
+
+# --- highSMA gmm3 ---
+output <- paste0(output,
+  report_clusters(dat_imputed_highSMA_train_gmm3, dat_imputed_highSMA_test_gmm3,
+                  dat_imputed_highSMA_train, dat_imputed_highSMA_test,
+                  "highSMA gmm3"),
+  report_silhouette(dat_imputed_highSMA_train_gmm3, dat_imputed_highSMA_test_gmm3,
+                    dat_imputed_highSMA_train_mds, dat_imputed_highSMA_test_mds_points,
+                    "highSMA gmm3")
+)
+
+
+# ===============================
+# Print all at once 
+# ===============================
+cat(output)
+
+
+``` 
+
+Now we visualise the results, for each of the four in turn.
+
+``` {r plot MDS coloured by clusters - train all}
+  
+
+plot_clusters_train_all <- plot_mds_clusters(mds_result = dat_imputed_all_train_mds$points, 
+                                             gmm_model  = dat_imputed_all_train_gmm2,
+                                             title  = "Clustering for train all"
+                                             )
+
+plot_clusters_train_all
+
+```
+
+``` {r plot MDS coloured by clusters - test all}
+
+
+plot_clusters_test_all <- plot_mds_clusters(mds_result = dat_imputed_all_test_mds_points, 
+                                             gmm_model = dat_imputed_all_test_gmm2,
+                                             title  = "Clustering for test all"
+                                             )
+
+plot_clusters_test_all
+
+FigS02c_plot <- ggplot(sma_plot_test_data, aes(x = sma, y = proportion,
+                                          group = factor(cluster),
+                                          color = factor(cluster))) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(x = "SMA Response", y = "Proportion", color = "Cluster") +
+  scale_color_manual(values = all_cluster_colours) +
+  theme_minimal()
+
+ggsave("figures/FigS02c.png", plot = FigS02c_plot, bg = "white", width = 6, height = 8, units = "in")
+
+
+
+```
+
+
+
+
+
+``` {r plot MDS coloured by clusters - train high SMA gmm3}
+
+
+plot_clusters_highSMA_train_gmm3 <- plot_mds_clusters(mds_result = dat_imputed_highSMA_train_mds$points, 
+                                             gmm_model = dat_imputed_highSMA_train_gmm3,
+                                             title  = "Clustering for highSMA train"
+                                             )
+
+plot_clusters_highSMA_train_gmm3
+
+
+```
+
+``` {r plot MDS coloured by clusters - test high SMA gmm3}
+
+
+plot_clusters_highSMA_test_gmm3 <- plot_mds_clusters(mds_result = dat_imputed_highSMA_test_mds_points, 
+                                             gmm_model = dat_imputed_highSMA_test_gmm3,
+                                             title  = "Clustering for highSMA test",
+                                               cluster_colours = highSMA_cluster_colours
+
+                                             )
+
+plot_clusters_highSMA_test_gmm3
+
+Fig02b_plot <- plot_mds_clusters(mds_result = dat_imputed_highSMA_test_mds_points, 
+                                             gmm_model = dat_imputed_highSMA_test_gmm3,
+                                             title  = "",
+                                               cluster_colours = highSMA_cluster_colours
+
+                                             )
+
+ggsave("figures/Fig02b.png", plot = Fig02b_plot, bg = "white", width = 14, height = 9, units = "in")
+
+
+```
+
+In RQ2 we said we would analyse how cluster membership across all clusters relates to SMA level. We do that here:
+
+``` {r clustering approach to compare all to SMA level }
+
+
+### ===============================
+### 1. Train chi-square test
+### ===============================
+dat_imputed_train_all_cluster_SMA <- data.frame(
+  cluster  = dat_imputed_all_train_gmm2$classification, 
+  mcsid_cm = dat_imputed_all_train$mcsid_cm) %>%
+  left_join(mcsid_cm_SMA, by= "mcsid_cm") %>%
+  filter(!is.na(sma))
+
+table_full_train <- table(dat_imputed_train_all_cluster_SMA$cluster,
+                          dat_imputed_train_all_cluster_SMA$sma)
+chi_train <- chisq.test(table_full_train)
+
+### ===============================
+### 2. Test chi-square test
+### ===============================
+dat_imputed_test_all_cluster_SMA <- data.frame(
+  cluster  = dat_imputed_all_test_gmm2$classification, 
+  mcsid_cm = dat_imputed_all_test$mcsid_cm) %>%
+  left_join(mcsid_cm_SMA, by= "mcsid_cm") %>%
+  filter(!is.na(sma))
+
+# contingency table: clusters × SMA
+table_full_test <- table(dat_imputed_test_all_cluster_SMA$cluster,
+                         dat_imputed_test_all_cluster_SMA$sma)
+
+chi_test <- chisq.test(table_full_test)
+
+# Run one test per SMA category (i.e., compare clusters for each SMA)
+posthoc_results <- lapply(colnames(table_full_test), function(sma_level) {
+  counts <- table_full_test[, sma_level]              # counts per cluster for this SMA
+  totals <- rowSums(table_full_test)                  # total per cluster
+  test <- prop.test(counts, totals)                   # chi-square test of equal proportions
+  list(sma = sma_level, test = test)
+})
+
+# Show results
+posthoc_results
+
+
+### ===============================
+### 3. Print chi-square results
+### ===============================
+cat("===== Chi-square SMA vs Cluster =====\n\n",
+    "Train set:\n", capture.output(chi_train), "\n\n",
+    "Test set:\n", capture.output(chi_test), "\n\n")
+
+### ===============================
+### 4. Plot SMA response proportions
+### ===============================
+sma_plot_train_data <- dat_imputed_train_all_cluster_SMA %>% 
+  group_by(cluster, sma) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  group_by(cluster) %>%
+  mutate(proportion = n / sum(n)) %>%
+  mutate(sma = factor(sma,
+                      levels = c("Strongly disagree", "Disagree", "Agree", "Strongly agree")))
+
+ggplot(sma_plot_train_data, aes(x = sma, y = proportion,
+                      group = factor(cluster), color = factor(cluster))) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(x = "SMA Response", y = "Proportion", color = "Cluster") +
+  theme_minimal()
+
+
+
+sma_plot_test_data <- dat_imputed_test_all_cluster_SMA %>% 
+  group_by(cluster, sma) %>%
+  summarise(n = n(), .groups = 'drop') %>%
+  group_by(cluster) %>%
+  mutate(proportion = n / sum(n)) %>%
+  mutate(sma = factor(sma,
+                      levels = c("Strongly disagree", "Disagree", "Agree", "Strongly agree")))
+
+ggplot(sma_plot_test_data, aes(x = sma, y = proportion,
+                      group = factor(cluster), color = factor(cluster))) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(x = "SMA Response", y = "Proportion", color = "Cluster") +
+  theme_minimal()
+
+
+``` 
+
+Now we do a series of elastic net regularised regression to establish 1) which variables predict SMA level across the population (RQ2iii) and 2) which variables predict membership of each of the three high SMA clusters a) vs. each other and b) vs. low SMA.
+
+To do that, we first prepare the datasets from which we will do the regression.
+
+``` {r define datasets for elastic net function }
+
+sma_levels <- c("Strongly disagree", "Disagree", "Agree", "Strongly agree")
+
+dat_all_xtrain <- dplyr::select(dat_imputed_SMA_train, -mcsid_cm, -sma)
+dat_all_xtest  <- dplyr::select(dat_imputed_SMA_test, -mcsid_cm, -sma)
+
+dat_highSMA_xtrain <- dplyr::select(dat_imputed_SMA_train, -mcsid_cm) %>%
+    filter(sma == "Agree" | sma == "Strongly agree") %>%
+  dplyr::select(-sma)
+dat_highSMA_xtest  <- dplyr::select(dat_imputed_SMA_test, -mcsid_cm) %>%
+    filter(sma == "Agree" | sma == "Strongly agree") %>%
+  dplyr::select(-sma)
+
+## clusters - TRAIN
+dat_imputed_highSMA_train_clust              <- dat_imputed_highSMA_train
+dat_imputed_highSMA_train_clust$gmm3_cluster <- dat_imputed_highSMA_train_gmm3$classification
+
+dat_imputed_all_train_clust <- dplyr::select(dat_imputed_SMA_train, -sma) %>%
+  left_join(
+    dplyr::select(dat_imputed_highSMA_train_clust, mcsid_cm, gmm3_cluster),
+    by = "mcsid_cm"
+  ) %>%
+  mutate(
+         gmm3_cluster = ifelse(is.na(gmm3_cluster), 0, as.character(gmm3_cluster))
+         ) %>%
+  select(-mcsid_cm)
+
+## clusters - TEST
+dat_imputed_highSMA_test_clust              <- dat_imputed_highSMA_test
+dat_imputed_highSMA_test_clust$gmm3_cluster <- dat_imputed_highSMA_test_gmm3$classification
+
+
+dat_imputed_all_test_clust <- dplyr::select(dat_imputed_SMA_test, -sma) %>%
+  left_join(
+    dplyr::select(dat_imputed_highSMA_test_clust, mcsid_cm, gmm3_cluster),
+    by = "mcsid_cm"
+  ) %>%
+  mutate(
+         gmm3_cluster = ifelse(is.na(gmm3_cluster), 0, as.character(gmm3_cluster))
+         ) %>%
+  select(-mcsid_cm)
+
+
+
+```
+
+Run regression, starting with all, predicting SMA.
+
+``` {r elastic net function - all vs SMA }
+
+
+dat_all_SMA_ytrain <- dat_imputed_SMA_train %>%
+    pull(sma) %>%
+    factor(levels = sma_levels, ordered = TRUE) %>%
+    as.numeric()
+dat_all_SMA_ytest <- dat_imputed_SMA_test %>%
+    pull(sma) %>%
+    factor(levels = sma_levels, ordered = TRUE) %>%
+    as.numeric()
+
+## run on training dataset to select optimal lambda value and get selected predictors
+
+fit_all_SMA <- cv.glmnet(
+  as.matrix(dat_all_xtrain), as.matrix(dat_all_SMA_ytrain),
+  type.measure = "mse",
+  alpha        = 0.5,
+  family       = "gaussian"
+)
+
+results_all_SMA <- bootstrap_feature_importance_wrapper(
+  dat_all_xtrain, dat_all_SMA_ytrain, 
+  dat_all_xtest, dat_all_SMA_ytest,
+  alpha_val = 0.5, fit_all_SMA$lambda.1se,
+    colours = c("#2166AC", "#A52A2A" ),
+  family = "gaussian"
+)
+
+
+# Access tables
+results_all_SMA$train$summary
+results_all_SMA$test_all$summary
+results_all_SMA$test_restricted$summary
+
+# Print plots
+print(results_all_SMA$train$plot)
+print(results_all_SMA$test_all$plot)
+print(results_all_SMA$test_restricted$plot)
+
+Fig01b_plot <- results_all_SMA$test_restricted$plot + 
+  scale_x_discrete(
+    labels = var_renames
+  ) +
+  scale_color_manual(
+    values = c("positive" = "#A52A2A", "negative" = "#2166AC")
+  ) +
+  labs(
+    title = ""
+  )
+
+
+ggsave("figures/Fig01b.png", plot = Fig01b_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+``` 
+
+``` {r elastic net function - highSMA vs SMA }
+
+dat_highSMA_SMA_ytrain <- dat_imputed_SMA_train %>%
+    filter(sma == "Agree" | sma == "Strongly agree") %>%
+    pull(sma) %>%
+    factor(levels = sma_levels, ordered = TRUE) %>%
+    as.numeric()
+  
+dat_highSMA_SMA_ytest <- dat_imputed_SMA_test %>%
+    filter(sma == "Agree" | sma == "Strongly agree") %>%
+    pull(sma) %>%
+    factor(levels = sma_levels, ordered = TRUE) %>%
+    as.numeric()
+  
+
+## run on training dataset to select optimal lambda value and get selected predictors
+
+fit_highSMA_SMA <- cv.glmnet(
+  as.matrix(dat_highSMA_xtrain), as.matrix(dat_highSMA_SMA_ytrain),
+  type.measure = "mse",
+  alpha        = 0.5,
+  family       = "gaussian"
+)
+
+results_highSMA_SMA <- bootstrap_feature_importance_wrapper(
+  dat_highSMA_xtrain, dat_highSMA_SMA_ytrain, 
+  dat_highSMA_xtest, dat_highSMA_SMA_ytest,
+  alpha_val   = 0.5, 
+  lambda      = fit_highSMA_SMA$lambda.1se,
+  colours     = c("purple", "darkgreen"),
+  family      = "gaussian"
+)
+
+# Access tables
+results_highSMA_SMA$train$summary
+results_highSMA_SMA$test_all$summary
+
+# Print plots
+print(results_highSMA_SMA$train$plot)
+print(results_highSMA_SMA$test_all$plot)
+
+``` 
+
+``` {r elastic net function - high vs gmm3 prob C1, probC2 and probC3 }
+
+dat_highSMA_gmm3probC1_ytrain <- dat_imputed_highSMA_train_gmm3$z[,1]
+dat_highSMA_gmm3probC1_ytest  <- dat_imputed_highSMA_test_gmm3$z[,1]
+
+dat_highSMA_gmm3probC2_ytrain <- dat_imputed_highSMA_train_gmm3$z[,2]
+dat_highSMA_gmm3probC2_ytest  <- dat_imputed_highSMA_test_gmm3$z[,2]
+
+dat_highSMA_gmm3probC3_ytrain <- dat_imputed_highSMA_train_gmm3$z[,3]
+dat_highSMA_gmm3probC3_ytest  <- dat_imputed_highSMA_test_gmm3$z[,3]
+
+
+## get optimal lambda
+
+fit_highSMA_gmm3probC1 <- cv.glmnet(
+  as.matrix(dat_highSMA_xtrain), as.matrix(dat_highSMA_gmm3probC1_ytrain),
+  type.measure = "mse",
+  alpha        = 0.5,
+  family       = "gaussian"
+)
+
+fit_highSMA_gmm3probC2 <- cv.glmnet(
+  as.matrix(dat_highSMA_xtrain), as.matrix(dat_highSMA_gmm3probC2_ytrain),
+  type.measure = "mse",
+  alpha        = 0.5,
+  family       = "gaussian"
+)
+
+fit_highSMA_gmm3probC3 <- cv.glmnet(
+  as.matrix(dat_highSMA_xtrain), as.matrix(dat_highSMA_gmm3probC3_ytrain),
+  type.measure = "mse",
+  alpha        = 0.5,
+  family       = "gaussian"
+)
+
+# run bootstraps
+
+### cluster 1
+
+results_highSMA_gmm3probC1 <- bootstrap_feature_importance_wrapper(
+  dat_highSMA_xtrain, dat_highSMA_gmm3probC1_ytrain, 
+  dat_highSMA_xtest, dat_highSMA_gmm3probC1_ytest,
+  alpha_val = 0.5, fit_highSMA_gmm3probC1$lambda.1se,
+  n_bootstrap = 1000,
+  colours = c("purple", "darkgreen"),
+  family = "gaussian"
+)
+
+# Access tables
+results_highSMA_gmm3probC1$train$summary
+results_highSMA_gmm3probC1$test_all$summary
+results_highSMA_gmm3probC1$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3probC1$train$plot)
+print(results_highSMA_gmm3probC1$test_all$plot)
+print(results_highSMA_gmm3probC1$test_restricted$plot)
+
+### cluster 2
+
+results_highSMA_gmm3probC2 <- bootstrap_feature_importance_wrapper(
+  dat_highSMA_xtrain, dat_highSMA_gmm3probC2_ytrain, 
+  dat_highSMA_xtest, dat_highSMA_gmm3probC2_ytest,
+  alpha_val = 0.5, fit_highSMA_gmm3probC2$lambda.1se,
+  n_bootstrap = 1000,
+  colours = c("purple", "darkgreen"),
+  family = "gaussian"
+)
+
+# Access tables
+results_highSMA_gmm3probC2$train$summary
+results_highSMA_gmm3probC2$test_all$summary
+results_highSMA_gmm3probC2$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3probC2$train$plot)
+print(results_highSMA_gmm3probC2$test_all$plot)
+print(results_highSMA_gmm3probC2$test_restricted$plot)
+
+### cluster 3
+
+results_highSMA_gmm3probC3 <- bootstrap_feature_importance_wrapper(
+  dat_highSMA_xtrain, dat_highSMA_gmm3probC3_ytrain, 
+  dat_highSMA_xtest, dat_highSMA_gmm3probC3_ytest,
+  alpha_val = 0.5, fit_highSMA_gmm3probC3$lambda.1se,
+  n_bootstrap = 1000,
+  colours = c("purple", "darkgreen"),
+  family = "gaussian"
+)
+
+# Access tables
+results_highSMA_gmm3probC3$train$summary
+results_highSMA_gmm3probC3$test_all$summary
+results_highSMA_gmm3probC3$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3probC3$train$plot)
+print(results_highSMA_gmm3probC3$test_all$plot)
+print(results_highSMA_gmm3probC3$test_restricted$plot)
+
+
+####### Make Figure 3 top row
+
+Fig03a_plot <- results_highSMA_gmm3probC1$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["1"]], "negative" = highSMA_cluster_colours[["1"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+  
+Fig03b_plot <- results_highSMA_gmm3probC2$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["2"]], "negative" = highSMA_cluster_colours[["2"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+
+Fig03c_plot <- results_highSMA_gmm3probC3$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["3"]], "negative" = highSMA_cluster_colours[["3"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+
+ggsave("figures/Fig03a.png", plot = Fig03a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig03b.png", plot = Fig03b_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig03c.png", plot = Fig03c_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+``` 
+
+
+
+``` {r elastic net function - all vs SMA specific variables compare }
+
+
+### ========================
+### gmm3 - Cluster 1
+### ========================
+dat_gmm3_C1_xtrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 1 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C1_ytrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 1 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+dat_gmm3_C1_xtest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 1 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C1_ytest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 1 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+fit_gmm3_C1 <- cv.glmnet(as.matrix(dat_gmm3_C1_xtrain), as.matrix(dat_gmm3_C1_ytrain),
+                         type.measure="mse", alpha=0.5, family="binomial")
+
+results_highSMA_gmm3_C1 <- bootstrap_feature_importance_wrapper(
+  dat_gmm3_C1_xtrain, dat_gmm3_C1_ytrain,
+  dat_gmm3_C1_xtest, dat_gmm3_C1_ytest,
+  alpha_val=0.5, lambda_val=fit_gmm3_C1$lambda.1se,
+  n_bootstrap=1000, colours=c("purple","darkgreen"),
+  family="binomial"
+)
+
+# Access tables
+results_highSMA_gmm3_C1$train$summary
+results_highSMA_gmm3_C1$test_all$summary
+results_highSMA_gmm3_C1$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3_C1$train$plot)
+print(results_highSMA_gmm3_C1$test_all$plot)
+print(results_highSMA_gmm3_C1$test_restricted$plot)
+
+
+### ========================
+### gmm3 - Cluster 2
+### ========================
+dat_gmm3_C2_xtrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 2 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C2_ytrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 2 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+dat_gmm3_C2_xtest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 2 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C2_ytest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 2 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+fit_gmm3_C2 <- cv.glmnet(as.matrix(dat_gmm3_C2_xtrain), as.matrix(dat_gmm3_C2_ytrain),
+                         type.measure="mse", alpha=0.5, family="binomial")
+
+results_highSMA_gmm3_C2 <- bootstrap_feature_importance_wrapper(
+  dat_gmm3_C2_xtrain, dat_gmm3_C2_ytrain,
+  dat_gmm3_C2_xtest, dat_gmm3_C2_ytest,
+  alpha_val=0.5, lambda_val=fit_gmm3_C2$lambda.1se,
+  n_bootstrap=1000, colours=c("purple","darkgreen"),
+  family="binomial"
+)
+
+
+# Access tables
+results_highSMA_gmm3_C2$train$summary
+results_highSMA_gmm3_C2$test_all$summary
+results_highSMA_gmm3_C2$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3_C2$train$plot)
+print(results_highSMA_gmm3_C2$test_all$plot)
+print(results_highSMA_gmm3_C2$test_restricted$plot)
+
+
+
+### ========================
+### gmm3 - Cluster 3
+### ========================
+dat_gmm3_C3_xtrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 3 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C3_ytrain <- dat_imputed_all_train_clust %>%
+  filter(gmm3_cluster == 3 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+dat_gmm3_C3_xtest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 3 | gmm3_cluster == 0) %>%
+  select(-gmm3_cluster)
+dat_gmm3_C3_ytest <- dat_imputed_all_test_clust %>%
+  filter(gmm3_cluster == 3 | gmm3_cluster == 0) %>%
+  pull(gmm3_cluster)
+
+fit_gmm3_C3 <- cv.glmnet(as.matrix(dat_gmm3_C3_xtrain), as.matrix(dat_gmm3_C3_ytrain),
+                         type.measure="mse", alpha=0.5, family="binomial")
+
+results_highSMA_gmm3_C3 <- bootstrap_feature_importance_wrapper(
+  dat_gmm3_C3_xtrain, dat_gmm3_C3_ytrain,
+  dat_gmm3_C3_xtest, dat_gmm3_C3_ytest,
+  alpha_val=0.5, lambda_val=fit_gmm3_C3$lambda.1se,
+  n_bootstrap=1000, colours=c("purple","darkgreen"),
+  family="binomial"
+)
+
+results_highSMA_gmm3_C3$train$summary
+results_highSMA_gmm3_C3$test_all$summary
+results_highSMA_gmm3_C3$test_restricted$summary
+
+# Print plots
+print(results_highSMA_gmm3_C3$train$plot)
+print(results_highSMA_gmm3_C3$test_all$plot)
+print(results_highSMA_gmm3_C3$test_restricted$plot)
+
+####### Make Figure 3 bottom row
+
+Fig03d_plot <- results_highSMA_gmm3_C1$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["1"]], "negative" = highSMA_cluster_colours[["1"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+  
+Fig03e_plot <- results_highSMA_gmm3_C2$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["2"]], "negative" = highSMA_cluster_colours[["2"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+
+Fig03f_plot <- results_highSMA_gmm3_C3$test_restricted$plot + 
+    scale_x_discrete(
+    labels = var_renames
+  ) + 
+    scale_color_manual(
+    values = c("positive" = highSMA_cluster_colours[["3"]], "negative" = highSMA_cluster_colours[["3"]])
+  ) +
+  labs(
+    title = ""
+  ) 
+
+ggsave("figures/Fig03d.png", plot = Fig03d_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig03e.png", plot = Fig03e_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig03f.png", plot = Fig03f_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+``` 
+
+
+Now we have done all clustering and regression, we want to compare demographic make-up of each cluster. 
+
+Now we explore RQ4 - demographics vs. cluster membership.
+
+Conduct SES PCA to reduce all SES variables to a single dimension.
+To do this, we i) preprocess the variables (recode gender and ethnicity, then convert all to numerical, then standardise), then ii) exclude all with 30% of data missing, then iii) kNN imputation for the missing variables for the rest, and finally iv) perform PCA.
+
+All these are done separately for the train then test datasets. 
+
+First, recode gender and ethnicity. 
+
+``` {r Make df with relevant variables, preprocessed for demographics}
+
+####### TRAIN
+
+dat_train_highSMA_cluster <- dat_imputed_highSMA_train %>%
+  mutate(highSMA_cluster = dat_imputed_highSMA_train_gmm3$classification) %>%
+  select(mcsid_cm, highSMA_cluster)
+
+dat_train_demographics_recoded <- dat_imputed_all_train %>% 
+  left_join(dat_NotImputed, by = "mcsid_cm") %>%
+  select(mcsid_cm, 
+         gender_id,
+         birthsex_id,
+         eleven_category_ethnicity, 
+         n_rooms_in_home, 
+         homelessness, 
+         income_cm, 
+         employment_par,
+         incomesource_par,
+         home_own_par,
+         perceived_finances_par,
+         household_income_1, 
+         household_income_2,
+         household_income_3, 
+         household_income_4,
+         household_income_5,
+         household_income_6) %>%
+  mutate(
+    all_cluster = dat_imputed_all_train_gmm2$classification
+  ) %>% 
+  left_join(dat_train_highSMA_cluster, by = "mcsid_cm")
+
+### recode gender
+
+dat_train_demographics_recoded <- dat_train_demographics_recoded %>%
+  mutate(gender_id_recoded = case_when(
+    gender_id == "Male" ~ "Male",
+    gender_id == "Female" ~ "Female",
+    gender_id %in% c(
+      "Non binary",
+      "Gender fluid",
+      "Androgynous / male and female",
+      "Other"
+    ) ~ "Other gender",
+    gender_id %in% c(
+      "Prefer not to say / Refused",
+      "Vague irrelevant answer",
+      "Don't know"
+    ) ~ "Prefer not to say",
+    TRUE ~ NA_character_
+  ))
+
+### recode ethnicity
+
+dat_train_demographics_recoded <- dat_train_demographics_recoded %>%
+  mutate(five_level_ethnicity = case_when(
+    eleven_category_ethnicity == "White" ~ "White",
+    eleven_category_ethnicity == "Mixed" ~ "Mixed or multiple ethnic groups",
+    eleven_category_ethnicity %in% c("Indian", "Pakistani", "Bangladeshi", "Other Asian", "Chinese") ~ "Asian or Asian British",
+    eleven_category_ethnicity %in% c("Black Caribbean", "Black African", "Other Black") ~ "Black, Black British, Caribbean or African",
+    eleven_category_ethnicity == "Other Ethnic group" ~ "Other Ethnic Group",
+    TRUE ~ NA_character_
+  ))
+
+####### TEST
+
+dat_test_highSMA_cluster <- dat_imputed_highSMA_test %>%
+  mutate(highSMA_cluster = dat_imputed_highSMA_test_gmm3$classification) %>%
+  select(mcsid_cm, highSMA_cluster)
+
+dat_test_demographics_recoded <- dat_imputed_all_test %>% 
+  left_join(dat_NotImputed, by = "mcsid_cm") %>%
+  select(mcsid_cm, 
+         gender_id,
+         birthsex_id,
+         eleven_category_ethnicity, 
+         n_rooms_in_home, 
+         homelessness, 
+         income_cm, 
+         employment_par,
+         incomesource_par,
+         home_own_par,
+         perceived_finances_par,
+         household_income_1, 
+         household_income_2,
+         household_income_3, 
+         household_income_4,
+         household_income_5,
+         household_income_6) %>%
+  mutate(
+    all_cluster = dat_imputed_all_test_gmm2$classification
+  ) %>% 
+  left_join(dat_test_highSMA_cluster, by = "mcsid_cm")
+
+### recode gender
+
+dat_test_demographics_recoded <- dat_test_demographics_recoded %>%
+  mutate(gender_id_recoded = case_when(
+    gender_id == "Male" ~ "Male",
+    gender_id == "Female" ~ "Female",
+    gender_id %in% c(
+      "Non binary",
+      "Gender fluid",
+      "Androgynous / male and female",
+      "Other"
+    ) ~ "Other gender",
+    gender_id %in% c(
+      "Prefer not to say / Refused",
+      "Vague irrelevant answer",
+      "Don't know"
+    ) ~ "Prefer not to say",
+    TRUE ~ NA_character_
+  ))
+
+### recode ethnicity
+
+dat_test_demographics_recoded <- dat_test_demographics_recoded %>%
+  mutate(five_level_ethnicity = case_when(
+    eleven_category_ethnicity == "White" ~ "White",
+    eleven_category_ethnicity == "Mixed" ~ "Mixed or multiple ethnic groups",
+    eleven_category_ethnicity %in% c("Indian", "Pakistani", "Bangladeshi", "Other Asian", "Chinese") ~ "Asian or Asian British",
+    eleven_category_ethnicity %in% c("Black Caribbean", "Black African", "Other Black") ~ "Black, Black British, Caribbean or African",
+    eleven_category_ethnicity == "Other Ethnic group" ~ "Other Ethnic Group",
+    TRUE ~ NA_character_
+  ))
+
+
+
+``` 
+
+Then, convert all to numeric.
+
+``` {r SES PCA - convert to numeric }
+
+##################################################################################
+## First, ordered factors
+##################################################################################
+
+####### Define functions to recode income answers to the same scale.
+## The variables to convert to numerical are actual income, perceived income and number of rooms.
+
+# Actual income:
+
+# Vectorized function to extract midpoint from income strings
+extract_income_midpoint <- Vectorize(function(income_str) {
+  if (is.na(income_str)) return(NA_real_)
+
+  # "More than" case
+  if (str_detect(income_str, "more than")) {
+    num <- str_extract(income_str, "[0-9,]+") %>%
+      str_remove_all(",") %>%
+      as.numeric()
+    return(num + 5000)  # crude lower bound guess
+  }
+
+  # "Less than" only (no lower bound given)
+  if (str_detect(income_str, "^Annual - less than")) {
+    num <- str_extract(income_str, "[0-9,]+") %>%
+      str_remove_all(",") %>%
+      as.numeric()
+    return(num / 2)  # assume midpoint between 0 and this value
+  }
+
+  # Standard range (e.g., "from X and less than Y")
+  nums <- str_extract_all(income_str, "[0-9,]+")[[1]] %>%
+    str_remove_all(",") %>%
+    as.numeric()
+
+  if (length(nums) == 2) {
+    return(mean(nums))  # midpoint
+  } else {
+    return(NA_real_)
+  }
+})
+
+# Vectorized function for time period → annual multiplier
+period_multiplier <- Vectorize(function(period_str) {
+  if (is.na(period_str)) return(NA_real_)
+  period_str <- tolower(period_str)
+  case_when(
+    str_detect(period_str, "one year|annual") ~ 1,
+    str_detect(period_str, "calendar month") ~ 12,
+    str_detect(period_str, "two calendar months") ~ 6,
+    str_detect(period_str, "four weeks") ~ 13,
+    str_detect(period_str, "two weeks") ~ 26,
+    str_detect(period_str, "one week") ~ 52,
+    str_detect(period_str, "less than one week") ~ 52,
+    str_detect(period_str, "six months") ~ 2,
+    str_detect(period_str, "nine times a year") ~ 9,
+    str_detect(period_str, "one off|lump sum|vague|irrelevant|other period") ~ NA_real_,
+    TRUE ~ NA_real_
+  )
+})
+
+# Apply recoding in pipeline to train and test 
+
+##### TRAIN
+
+dat_train_demographics_numeric <- dat_train_demographics_recoded %>%
+  mutate(
+    # Extract income values from range
+    income_1 = extract_income_midpoint(household_income_1),
+    income_2 = extract_income_midpoint(household_income_4),
+
+    # Extract time period multipliers
+    mult_1 = period_multiplier(household_income_2),
+    mult_2 = period_multiplier(household_income_3),
+    mult_3 = period_multiplier(household_income_5),
+    mult_4 = period_multiplier(household_income_6),
+
+    # Compute estimated annual income
+    income_annual_1 = case_when(
+      !is.na(income_1) & !is.na(mult_1) ~ income_1 * mult_1,
+      !is.na(income_1) & !is.na(mult_2) ~ income_1 * mult_2,
+      TRUE ~ NA_real_
+    ),
+
+    income_annual_2 = case_when(
+      !is.na(income_2) & !is.na(mult_3) ~ income_2 * mult_3,
+      !is.na(income_2) & !is.na(mult_4) ~ income_2 * mult_4,
+      TRUE ~ NA_real_
+    ),
+
+    # Final recoded income: take whichever is available
+    household_income_annual_recoded = coalesce(income_annual_1, income_annual_2)
+  ) %>%
+  # Clean temporary columns
+  dplyr::select(-income_1, -income_2, -mult_1, -mult_2, -mult_3, -mult_4,
+         -income_annual_1, -income_annual_2)
+
+####### TEST
+
+
+dat_test_demographics_numeric <- dat_test_demographics_recoded %>%
+  mutate(
+    # Extract income values from range
+    income_1 = extract_income_midpoint(household_income_1),
+    income_2 = extract_income_midpoint(household_income_4),
+
+    # Extract time period multipliers
+    mult_1 = period_multiplier(household_income_2),
+    mult_2 = period_multiplier(household_income_3),
+    mult_3 = period_multiplier(household_income_5),
+    mult_4 = period_multiplier(household_income_6),
+
+    # Compute estimated annual income
+    income_annual_1 = case_when(
+      !is.na(income_1) & !is.na(mult_1) ~ income_1 * mult_1,
+      !is.na(income_1) & !is.na(mult_2) ~ income_1 * mult_2,
+      TRUE ~ NA_real_
+    ),
+
+    income_annual_2 = case_when(
+      !is.na(income_2) & !is.na(mult_3) ~ income_2 * mult_3,
+      !is.na(income_2) & !is.na(mult_4) ~ income_2 * mult_4,
+      TRUE ~ NA_real_
+    ),
+
+    # Final recoded income: take whichever is available
+    household_income_annual_recoded = coalesce(income_annual_1, income_annual_2)
+  ) %>%
+  # Clean temporary columns
+  dplyr::select(-income_1, -income_2, -mult_1, -mult_2, -mult_3, -mult_4,
+         -income_annual_1, -income_annual_2)
+
+
+
+# Perceived income and Nrooms:
+
+perceied_fin_levels <- c(
+   "Finding it very difficult" ,
+   "Finding it quite difficult",
+    "Just about getting by" ,  
+   "Doing alright"    ,
+   "Living comfortably"  
+)
+
+### TRAIN 
+
+dat_train_demographics_numeric$perceived_finances_par     <- factor(dat_train_demographics_numeric$perceived_finances_par, levels = perceied_fin_levels, ordered = TRUE)
+dat_train_demographics_numeric$perceived_finances_par_num <- as.numeric(dat_train_demographics_numeric$perceived_finances_par)
+
+dat_train_demographics_numeric <- dat_train_demographics_numeric %>%
+  mutate(
+    n_rooms_num = case_when(
+      str_detect(n_rooms_in_home, "10\\+") ~ 10,
+      TRUE ~ str_extract(n_rooms_in_home, "\\d+") %>% as.numeric()
+    )
+  ) 
+
+
+### TEST
+
+
+dat_test_demographics_numeric$perceived_finances_par <- factor(dat_test_demographics_numeric$perceived_finances_par, levels = perceied_fin_levels, ordered = TRUE)
+dat_test_demographics_numeric$perceived_finances_par_num <- as.numeric(dat_test_demographics_numeric$perceived_finances_par)
+
+dat_test_demographics_numeric <- dat_test_demographics_numeric %>%
+  mutate(
+    n_rooms_num = case_when(
+      str_detect(n_rooms_in_home, "10\\+") ~ 10,
+      TRUE ~ str_extract(n_rooms_in_home, "\\d+") %>% as.numeric()
+    )
+  ) 
+
+
+
+```
+
+Now exclude those with over 30% of variables missing.
+
+```{r exclude ppids with missing SES vars}
+
+# select only the SES vars
+
+dat_train_SES <- dat_train_demographics_numeric %>%
+  dplyr::select(
+    mcsid_cm,
+    n_rooms_num, 
+    homelessness, 
+    income_cm, 
+    employment_par,
+    incomesource_par,
+    home_own_par,
+    perceived_finances_par_num,
+    household_income_annual_recoded
+  ) %>% 
+  mutate(
+    valid_row = rowSums(!is.na(across(-mcsid_cm))) / (ncol(across(-mcsid_cm))) > 0.7
+    ) 
+
+dat_test_SES <- dat_test_demographics_numeric %>%
+  dplyr::select(
+    mcsid_cm,
+    n_rooms_num, 
+    homelessness, 
+    income_cm, 
+    employment_par,
+    incomesource_par,
+    home_own_par,
+    perceived_finances_par_num,
+    household_income_annual_recoded
+  )%>% 
+  mutate(
+    valid_row = rowSums(!is.na(across(-mcsid_cm))) / (ncol(across(-mcsid_cm))) > 0.7
+    ) 
+
+
+dat_train_SES_retain <- dat_train_SES %>%
+  filter(valid_row == TRUE) %>% 
+  select(-valid_row)
+
+
+dat_test_SES_retain <- dat_test_SES %>%
+  filter(valid_row == TRUE) %>% 
+  select(-valid_row)
+
+
+print(str_c("MCSID_CM included in train: ", length(unique(dat_train_SES_retain$mcsid_cm)), ", MCSID_CM excluded: ", sum(dat_train_SES$valid_row == FALSE)))
+print(str_c("MCSID_CM included in test: ", length(unique(dat_test_SES_retain$mcsid_cm)), ", MCSID_CM excluded: ", sum(dat_test_SES$valid_row == FALSE)))
+
+```
+Scale numerical variables before adding
+
+
+```{r clean SES vars}
+
+dat_train_SES_scaled <- dat_train_SES_retain
+dat_test_SES_scaled  <- dat_test_SES_retain
+
+######## Scale
+
+dat_train_SES_scaled$household_income_annual_recoded  <- scale(dat_train_SES_scaled$household_income_annual_recoded)
+dat_train_SES_scaled$perceived_finances_par_num       <- scale(dat_train_SES_scaled$perceived_finances_par_num)
+dat_train_SES_scaled$n_rooms_num                      <- scale(dat_train_SES_scaled$n_rooms_num)
+
+dat_test_SES_scaled$household_income_annual_recoded   <- scale(dat_test_SES_scaled$household_income_annual_recoded)
+dat_test_SES_scaled$perceived_finances_par_num        <- scale(dat_test_SES_scaled$perceived_finances_par_num)
+dat_test_SES_scaled$n_rooms_num                       <- scale(dat_test_SES_scaled$n_rooms_num)
+
+
+
+```
+
+
+Now create dummy vars for the unordered factors.
+
+```{r unordered factor dummies for SES vars}
+
+##################################################################################
+## Now, unordered factors
+##################################################################################
+
+create_dummy_variables <- function(df) {
+
+  # Identify character columns, excluding 'mcsid_cm'
+  char_cols <- setdiff(names(df)[sapply(df, is.character)], "mcsid_cm")
+  
+  # Convert those character columns to factors (to use fct_inorder)
+  df <- df %>%
+    mutate(across(all_of(char_cols), ~ as.factor(.x))) %>%
+    # Change factor order so first dummy removed corresponds to most frequent level
+    mutate(across(all_of(char_cols), fct_inorder))
+  
+  # Create dummy variables for these now-factor columns
+  dat_dummies <- dummy_cols(
+    df,
+    select_columns = char_cols,
+    remove_selected_columns = TRUE,
+    remove_first_dummy = TRUE,
+    ignore_na = TRUE
+  )
+  
+  # Replace spaces in column names with underscores
+  names(dat_dummies) <- gsub(" ", "_", names(dat_dummies))
+
+  return(dat_dummies)
+}
+
+
+# Apply the function
+dat_train_SES_dummies <- create_dummy_variables(dat_train_SES_scaled)
+dat_test_SES_dummies  <- create_dummy_variables(dat_test_SES_scaled)
+
+
+```
+
+
+Now perform imputation for the remaining vars.
+
+```{r impute SES vars}
+
+
+##### TRAIN
+dat_train_SES_imputed <- kNN(dat_train_SES_dummies, 
+                   variable = colnames(select(dat_train_SES_dummies, -mcsid_cm)),  
+                   k        = 25,
+                   dist_var = colnames(select(dat_train_SES_dummies, -mcsid_cm)) 
+)
+# remove the new columns which say if it was imputed
+dat_train_SES_imputed <- dat_train_SES_imputed[ , !grepl("_imp$", names(dat_train_SES_imputed))]
+
+
+dat_test_SES_imputed <- kNN(dat_test_SES_dummies, 
+                   variable = colnames(select(dat_test_SES_dummies, -mcsid_cm)),  
+                   k        = 25,
+                   dist_var = colnames(select(dat_test_SES_dummies, -mcsid_cm)) 
+)
+# remove the new columns which say if it was imputed
+dat_test_SES_imputed <- dat_test_SES_imputed[ , !grepl("_imp$", names(dat_test_SES_imputed))]
+
+```
+
+
+Now perform PCA.
+
+```{r perform SES PCA}
+
+####################################################################
+#### TRAIN
+####################################################################
+
+# Select numeric columns excluding cluster columns
+pca_train_data <- dat_train_SES_imputed %>%
+  select(-mcsid_cm)  
+
+# Now run PCA on clean data
+pca_train <- princomp(pca_train_data)
+summary(pca_train)
+
+# Step 1: Extract scores on first principal component
+pc1_scores_train <- pca_train$scores[, 1]
+
+# Now, assign the PC1 scores into the main dataset
+
+dat_train_SES_dummies_PC1 <- dat_train_SES_dummies %>%
+  mutate(SES_PC1 = pc1_scores_train) %>%
+  dplyr::select(mcsid_cm, SES_PC1)
+
+dat_train_demographics_SES <- dat_train_demographics_recoded %>%
+  left_join(dat_train_SES_dummies_PC1, by = "mcsid_cm")
+dat_train_SES_dummies$SES_PC1 <- pc1_scores_train
+
+####################################################################
+#### TEST
+####################################################################
+
+# Select numeric columns excluding cluster columns
+pca_test_data <- dat_test_SES_imputed %>%
+  select(-mcsid_cm)  
+
+# Now run PCA on clean data
+pca_test <- princomp(pca_test_data)
+summary(pca_test)
+
+# Step 1: Extract scores on first principal component
+pc1_scores_test <- pca_test$scores[, 1]
+
+# Now, assign the PC1 scores into the main dataset
+
+dat_test_SES_dummies_PC1 <- dat_test_SES_dummies %>%
+  mutate(SES_PC1 = pc1_scores_test) %>%
+  dplyr::select(mcsid_cm, SES_PC1)
+
+dat_test_demographics_SES <- dat_test_demographics_recoded %>%
+  left_join(dat_test_SES_dummies_PC1, by = "mcsid_cm")
+dat_test_SES_dummies$SES_PC1 <- pc1_scores_test
+
+
+
+
+```
+Now make the demographics tables for the clusters.
+
+
+```{r make demographics tables}
+
+####################################################################
+#### FUNCTIONS
+####################################################################
+
+
+# Helper function to compute chi-square table
+compute_chisq_summary <- function(df, cluster_var, cat_var) {
+  tab <- table(df[[cat_var]], df[[cluster_var]])
+  prop_tab <- prop.table(tab, margin = 2)  # column-wise proportions
+  counts <- as.data.frame.matrix(tab)
+  props <- as.data.frame.matrix(prop_tab)
+  
+  # Ensure columns are named C1 and C2 regardless of order
+  colnames(counts) <- paste0("n_C", colnames(counts))
+  colnames(props) <- paste0("C", colnames(props))
+  
+  n_clusters <- ncol(tab)
+  
+  # Start with fixed columns
+  summary_df <- tibble(
+    Category = rownames(tab),
+    p_value = round(chisq.test(tab)$p.value, 3)
+  )
+  
+  # Dynamically add n_CX and CX columns
+  for (i in seq_len(n_clusters)) {
+    summary_df[[paste0("n_C", i)]] <- counts[, paste0("n_C", i)]
+    summary_df[[paste0("C", i)]]   <- props[, paste0("C", i)] %||% 0
+  }
+
+  
+  return(summary_df)
+}
+
+compute_chisq <- function(df, cluster_var, cat_var) {
+  tab <- table(df[[cat_var]], df[[cluster_var]])
+  prop_tab <- prop.table(tab, margin = 2)  # column-wise proportions
+  counts <- as.data.frame.matrix(tab)
+  props <- as.data.frame.matrix(prop_tab)
+  
+  chisq.test(tab)
+}
+
+
+compute_ttestOrANOVA_summary <- function(df, cluster_var, ses_var) {
+  # Count number of unique groups
+  n_groups <- df %>% dplyr::pull(!!rlang::sym(cluster_var)) %>% unique() %>% length()
+  
+  # Compute means per group
+  stats <- df %>%
+    dplyr::group_by(!!rlang::sym(cluster_var)) %>%
+    dplyr::summarise(
+      n_val = dplyr::n(),
+      mean_val = mean(!!rlang::sym(ses_var), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(!!rlang::sym(cluster_var))
+  
+  
+  # Choose test
+  if (n_groups == 2) {
+    test <- t.test(df[[ses_var]] ~ df[[cluster_var]])
+    p_val <- round(test$p.value, 3)
+    test_used <- "t-test"
+  } else if (n_groups > 2) {
+    test <- aov(df[[ses_var]] ~ df[[cluster_var]], data = df)
+    p_val <- round(summary(test)[[1]][["Pr(>F)"]][1], 3)
+    test_used <- "ANOVA"
+  } else {
+    stop("Not enough groups to run a statistical test.")
+  }
+  
+  # Build output
+  results <- tibble::tibble(
+    Category = "SES PC1",
+    Test = test_used,
+    p_value = p_val
+  )
+  
+  # Add group means dynamically
+  for (i in seq_len(nrow(stats))) {
+    results[[paste0("n_C", i)]] <- stats$n_val[i]
+    results[[paste0("C", i)]] <- stats$mean_val[i]
+  }
+  
+  return(results)
+}
+
+####################################################################
+#### MAKE TABLES
+####################################################################
+
+####################################################################
+#### Train
+
+# Generate cleaned summary for both cluster types
+summary_all_cluster_train <- bind_rows(
+  compute_chisq_summary(dat_train_demographics_SES, "all_cluster", "gender_id_recoded"),
+  compute_chisq_summary(dat_train_demographics_SES, "all_cluster", "five_level_ethnicity"),
+  compute_ttestOrANOVA_summary(dat_train_demographics_SES, "all_cluster", "SES_PC1")
+
+)
+
+dat_train_demographics_SES_highSMA <- filter(dat_train_demographics_SES, !is.na(highSMA_cluster))
+summary_highSMA_cluster_train <- bind_rows(
+  compute_chisq_summary(dat_train_demographics_SES_highSMA, "highSMA_cluster", "gender_id_recoded"),
+  compute_chisq_summary(dat_train_demographics_SES_highSMA, "highSMA_cluster", "five_level_ethnicity"),
+  compute_ttestOrANOVA_summary(dat_train_demographics_SES_highSMA, "all_cluster", "SES_PC1")
+
+)
+
+# View the tables
+print("=== Summary by ALL CLUSTER ===")
+print(summary_all_cluster_train, n = Inf)
+
+print("=== Summary by HIGH SMA CLUSTER ===")
+print(summary_highSMA_cluster_train, n = Inf)
+
+print(compute_ttestOrANOVA_summary(dat_train_demographics_SES, "all_cluster", "SES_PC1"))
+print(compute_ttestOrANOVA_summary(dat_train_demographics_SES_highSMA, "highSMA_cluster", "SES_PC1"))
+
+####################################################################
+#### Test
+
+# Generate cleaned summary for both cluster types
+summary_all_cluster_test <- bind_rows(
+  compute_chisq_summary(dat_test_demographics_SES, "all_cluster", "gender_id_recoded"),
+  compute_chisq_summary(dat_test_demographics_SES, "all_cluster", "five_level_ethnicity"),
+  compute_ttestOrANOVA_summary(dat_test_demographics_SES, "all_cluster", "SES_PC1")
+
+)
+
+dat_test_demographics_SES_highSMA <- filter(dat_test_demographics_SES, !is.na(highSMA_cluster))
+summary_highSMA_cluster_test <- bind_rows(
+  compute_chisq_summary(dat_test_demographics_SES_highSMA, "highSMA_cluster", "gender_id_recoded"),
+  compute_chisq_summary(dat_test_demographics_SES_highSMA, "highSMA_cluster", "five_level_ethnicity"),
+  compute_ttestOrANOVA_summary(dat_test_demographics_SES_highSMA, "highSMA_cluster", "SES_PC1")
+)
+
+# View the tables
+print("=== Summary by ALL CLUSTER ===")
+print(summary_all_cluster_test, n = Inf)
+
+print("=== Summary by HIGH SMA CLUSTER ===")
+print(summary_highSMA_cluster_test, n = Inf)
+
+
+
+```
+
+```{r output tables}
+
+write.csv(summary_all_cluster_train, str_c( "summary_tables/", format(Sys.time(), "%Y%m%d_%H%M"), "summary_all_cluster_train.csv"))
+write.csv(summary_highSMA_cluster_train, str_c( "summary_tables/", format(Sys.time(), "%Y%m%d_%H%M"), "summary_highSMA_cluster_train.csv"))
+
+write.csv(summary_all_cluster_test, str_c( "summary_tables/", format(Sys.time(), "%Y%m%d_%H%M"), "summary_all_cluster_test.csv"))
+write.csv(summary_highSMA_cluster_test, str_c( "summary_tables/", format(Sys.time(), "%Y%m%d_%H%M"), "summary_highSMA_cluster_test.csv"))
+
+```
+
+Now we output statistics about depression, self control and wellbeing for each cluster for the final main paper figure. For each, we plot (i) the raw differences, and (ii) the gradients relating each to SMA.
+
+``` {r make datasets for plotting }
+
+# convert smHrs into numeric
+smHrs_levels <- c("None",
+                  "Less than half an hour",
+                  "Half an hour to less than 1 hour",
+                  "1 hour to less than 2 hours",
+                  "2 hours to less than 3 hours",
+                  "3 hours to less than 5 hours",
+                  "5 hours to less than 7 hours",
+                  "7 hours to less than 10 hours",
+                  "10 hours or more")
+
+# Define numeric values
+smHrs_numeric <- c(0,
+                   0.25,
+                   1.5,
+                   2.5,
+                   4,
+                   6,
+                   8.5,
+                   10)
+
+prepare_smHrs_data <- function(dat_imputed_highSMA, dat_imputed_lowSMA, dat_NotImputed, classification_obj_highSMA, classification_obj_lowSMA, group = "train") {
+  
+  # High SMA group with GMM clusters
+  dat_high <- dat_imputed_highSMA %>%
+    left_join(dat_NotImputed, by = "mcsid_cm") %>%
+    dplyr::select(mcsid_cm, sma, sm_hrs, kessl_depression.y,  warwick_wellbeing.y, self_control.y) %>%
+    mutate(
+      sm_hrs         = factor(sm_hrs, levels = smHrs_levels, ordered = TRUE),
+      sm_hrs_Numeric = smHrs_numeric[as.numeric(sm_hrs)],
+      cluster        = str_c("highSMA", as.character(classification_obj_highSMA$classification)),
+      sma            = factor(sma, levels = sma_levels, ordered = TRUE),
+      dataset        = group
+    )
+  
+  dat_low <- dat_imputed_lowSMA %>%
+    left_join(dat_NotImputed, by = "mcsid_cm") %>%
+    left_join(classification_obj_lowSMA, by = "mcsid_cm") %>%
+    dplyr::select(mcsid_cm, sma, sm_hrs, kessl_depression.y, warwick_wellbeing.y, self_control.y, classification) %>%
+    mutate(
+      sm_hrs         = factor(sm_hrs, levels = smHrs_levels, ordered = TRUE),
+      sm_hrs_Numeric = smHrs_numeric[as.numeric(sm_hrs)],
+     # cluster        = str_c("lowSMA", as.character(classification)),
+      cluster        = "lowSMA",
+      sma            = factor(sma, levels = sma_levels, ordered = TRUE),
+      dataset        = group
+    )
+
+  dplyr::bind_rows(dat_high, dat_low)
+}
+
+  # Low SMA group
+dat_imputed_all_train_cluster <- dat_imputed_all_train %>% 
+    mutate(classification = dat_imputed_all_train_gmm2$classification) %>%
+    select(mcsid_cm, classification)
+  # Low SMA group
+dat_imputed_all_test_cluster <- dat_imputed_all_test %>% 
+    mutate(classification = dat_imputed_all_test_gmm2$classification) %>%
+    select(mcsid_cm, classification)
+
+
+dat_train_smHrs <- prepare_smHrs_data(
+  dat_imputed_highSMA_train,
+  dat_imputed_lowSMA_train,
+  dat_NotImputed,
+  dat_imputed_highSMA_train_gmm3,
+  dat_imputed_all_train_cluster,
+  group = "Train"
+)
+
+dat_test_smHrs <- prepare_smHrs_data(
+  dat_imputed_highSMA_test,
+  dat_imputed_lowSMA_test,
+  dat_NotImputed,
+  dat_imputed_highSMA_test_gmm3,
+  dat_imputed_all_test_cluster,
+  group = "Test"
+)
+
+# Combine both
+dat_all_smHrs <- dplyr::bind_rows(dat_train_smHrs, dat_test_smHrs)
+dat_all_smHrs$dataset <- factor(dat_all_smHrs$dataset, levels = rev(levels(factor(dat_all_smHrs$dataset))))
+
+
+``` 
+
+
+
+
+
+Now we plot time spent, etc.
+
+``` {r compare time spent on social media between clusters}
+
+ggplot(dat_train_smHrs, aes(x = as.factor(cluster), y = sm_hrs_Numeric, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +  # density cloud
+ # gghalves::geom_half_point(side = "l", alpha = 0.6, shape = 21, size = 1.5, color = "black") + # jittered dots
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(dat_test_smHrs, aes(x = as.factor(cluster), y = sm_hrs_Numeric, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +  # density cloud
+ # gghalves::geom_half_point(side = "l", alpha = 0.6, shape = 21, size = 1.5, color = "black") + # jittered dots
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+``` 
+
+``` {r compare depression between clusters}
+
+ggplot(dat_train_smHrs, aes(x = as.factor(cluster), y = kessl_depression.y, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +  # density cloud
+ # gghalves::geom_half_point(side = "l", alpha = 0.6, shape = 21, size = 1.5, color = "black") + # jittered dots
+  geom_hline(yintercept = 13, linetype = "dotted", color = "red", linewidth = 0.8) + # cutoff line
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+
+Fig04c_plot <- ggplot(dat_test_smHrs, aes(x = as.factor(cluster), y = kessl_depression.y, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.65, justification = -0.2, .width = 0, point_colour = NA, scale = 0.7) +  # density cloud
+  geom_hline(yintercept = 13, linetype = "dotted", color = "red", linewidth = 0.8) + # cutoff line
+  annotate("text", x = 5.2, y = 13.3, label = "Clinical cutoff", color = "red", hjust = 0) + # label
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  scale_fill_manual(
+    values = c(
+      "highSMA1" = "#B34CC2",
+      "highSMA2" = "#6BCB3D",
+      "highSMA3" = "#F4A300"
+    )
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+Fig04d_plot <- ggplot(dat_test_smHrs, aes(x = as.factor(cluster), y = self_control.y, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.65, justification = -0.2, .width = 0, point_colour = NA, scale = 0.7) +  # density cloud
+  annotate("text", x = 5.2, y = 13.3, label = "Clinical cutoff", color = "red", hjust = 0) + # label
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  scale_fill_manual(
+    values = c(
+      "highSMA1" = "#B34CC2",
+      "highSMA2" = "#6BCB3D",
+      "highSMA3" = "#F4A300"
+    )
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+ggsave("figures/Fig04c.png", plot = Fig04c_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig04d.png", plot = Fig04d_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+``` 
+
+``` {r compare self control between clusters}
+
+ggplot(dat_train_smHrs, aes(x = as.factor(cluster), y = self_control.y, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +  # density cloud
+ # gghalves::geom_half_point(side = "l", alpha = 0.6, shape = 21, size = 1.5, color = "black") + # jittered dots
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(dat_test_smHrs, aes(x = as.factor(cluster), y = self_control.y, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +  # density cloud
+ # gghalves::geom_half_point(side = "l", alpha = 0.6, shape = 21, size = 1.5, color = "black") + # jittered dots
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+
+``` 
+
+
+``` {r stats}
+
+# Load libraries
+library(dplyr)
+library(rstatix)
+library(purrr)
+
+# Ensure cluster and sma are factors
+dat_test_smHrs$cluster <- factor(dat_test_smHrs$cluster)
+dat_test_smHrs$sma <- factor(dat_test_smHrs$sma)
+
+## --------------------------
+## Continuous variables
+## --------------------------
+
+# Pairwise comparisons for kesxsl_depression.y
+dep_results <- dat_test_smHrs %>%
+  pairwise_t_test(kessl_depression.y ~ cluster, p.adjust.method = "bonferroni")
+
+t.test(self_control.y ~ cluster, data = filter(dat_test_smHrs, 
+                                                   cluster == "highSMA3" | cluster ==  "lowSMA"))
+t.test(kessl_depression.y ~ cluster, data = filter(dat_test_smHrs, 
+                                                   cluster == "highSMA3" | cluster ==  "lowSMA"))
+
+# Pairwise comparisons for self_control.y
+sc_results <- dat_test_smHrs %>%
+  pairwise_t_test(self_control.y ~ cluster, p.adjust.method = "bonferroni")
+
+## --------------------------
+## Binary variable (sma) - Chi-square
+## --------------------------
+
+# Function to do chi-squared test on two cluster levels
+pairwise_chisq <- function(level1, level2, data) {
+  subdat <- data %>% filter(cluster %in% c(level1, level2)) %>%
+    filter(!is.na(sma))
+  tbl <- table(subdat$cluster, subdat$sma)
+  tbl <- tbl[, colSums(tbl) > 0]
+  tbl <- tbl[ rowSums(tbl) > 0,]
+  test <- suppressWarnings(chisq.test(tbl))  # suppress warning about small counts
+  tibble(
+    group1 = level1,
+    group2 = level2,
+    p = test$p.value
+  )
+}
+
+pairwise_chisq <- function(level1, level2, data) {
+  subdat <- data %>%
+    filter(cluster %in% c(level1, level2)) %>%
+    filter(!is.na(sma))
+
+  tbl <- table(subdat$cluster, subdat$sma)
+  tbl <- tbl[, colSums(tbl) > 0, drop = FALSE]
+  tbl <- tbl[rowSums(tbl) > 0, , drop = FALSE]
+
+  # Handle cases where test cannot be run
+  if (nrow(tbl) < 2 || ncol(tbl) < 2) {
+    return(tibble(
+      group1 = level1,
+      group2 = level2,
+      statistic = NA_real_,
+      df = NA_integer_,
+      p = NA_real_,
+      result_str = "Test not applicable"
+    ))
+  }
+
+  # Perform chi-squared test
+  test <- suppressWarnings(chisq.test(tbl))
+
+  # Format the output
+  formatted_p <- ifelse(test$p.value < 0.001, "p < 0.001",
+                        paste0("p = ", sprintf("%.3f", test$p.value)))
+
+  result_str <- sprintf("χ²(%d) = %.3f, %s",
+                        test$parameter, test$statistic, formatted_p)
+
+  tibble(
+    group1 = level1,
+    group2 = level2,
+    statistic = unname(test$statistic),
+    df = unname(test$parameter),
+    p = test$p.value,
+    result_str = result_str
+  )
+}
+pairwise_chisq <- function(level1, level2, data) {
+  subdat <- data %>%
+    filter(cluster %in% c(level1, level2)) %>%
+    filter(!is.na(sma))
+
+  tbl <- table(subdat$cluster, subdat$sma)
+  tbl <- tbl[, colSums(tbl) > 0, drop = FALSE]
+  tbl <- tbl[rowSums(tbl) > 0, , drop = FALSE]
+
+  # Handle cases where test cannot be run
+  if (nrow(tbl) < 2 || ncol(tbl) < 2) {
+    return(tibble(
+      group1 = level1,
+      group2 = level2,
+      statistic = NA_real_,
+      df = NA_integer_,
+      p = NA_real_,
+      result_str = "Test not applicable"
+    ))
+  }
+
+  # Perform chi-squared test
+  test <- suppressWarnings(chisq.test(tbl))
+
+  # Format the output
+  formatted_p <- ifelse(test$p.value < 0.001, "p < 0.001",
+                        paste0("p = ", sprintf("%.3f", test$p.value)))
+
+  result_str <- sprintf("χ²(%d) = %.3f, %s",
+                        test$parameter, test$statistic, formatted_p)
+
+  tibble(
+    group1 = level1,
+    group2 = level2,
+    statistic = unname(test$statistic),
+    df = unname(test$parameter),
+    p = test$p.value,
+    result_str = result_str
+  )
+}
+
+
+# All pairwise combinations of clusters
+cluster_levels <- levels(dat_test_smHrs$cluster)
+pairwise_combos <- combn(cluster_levels, 2, simplify = FALSE)
+
+# Run Chi-square test on each pair
+sma_results <- map_dfr(pairwise_combos, ~pairwise_chisq(.x[1], .x[2], dat_test_smHrs))
+
+# Adjust p-values
+sma_results <- sma_results %>%
+  mutate(
+    p.adj = p.adjust(p, method = "bonferroni"),
+    p.adj.signif = case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01 ~ "**",
+      p.adj < 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+## --------------------------
+## Output results
+## --------------------------
+dep_results
+sc_results
+sma_results
+
+
+results_dep_sc <- bind_rows(dep_results, sc_results)
+write.csv( results_dep_sc,'summary_tables/results_dep_sc.csv')
+
+dat_test_smHrs$cluster <- as.character(dat_test_smHrs$cluster)
+dat_c1_low <- filter(dat_test_smHrs, cluster == "lowSMA" | cluster == "highSMA1")
+dat_c2_low <- filter(dat_test_smHrs, cluster == "lowSMA" | cluster == "highSMA2")
+dat_c3_low <- filter(dat_test_smHrs, cluster == "lowSMA" | cluster == "highSMA3")
+
+dat_c1_c2 <- filter(dat_test_smHrs, cluster == "highSMA1" | cluster == "highSMA2")
+dat_c1_c3 <- filter(dat_test_smHrs, cluster == "highSMA1" | cluster == "highSMA3")
+dat_c2_c3 <- filter(dat_test_smHrs, cluster == "highSMA2" | cluster == "highSMA3")
+
+
+chisq.test(table(dat_c1_low$cluster, dat_c1_low$sma))
+chisq.test(table(dat_c2_low$cluster, dat_c2_low$sma))
+chisq.test(table(dat_c3_low$cluster, dat_c3_low$sma))
+
+chisq.test(table(dat_c1_c2$cluster, dat_c1_c2$sma)[rowSums(table(dat_c1_c2$cluster, dat_c1_c2$sma)) != 0, colSums(table(dat_c1_c2$cluster, dat_c1_c2$sma)) != 0])
+chisq.test(table(dat_c1_c3$cluster, dat_c1_c3$sma)[rowSums(table(dat_c1_c3$cluster, dat_c1_c3$sma)) != 0, colSums(table(dat_c1_c3$cluster, dat_c1_c3$sma)) != 0])
+chisq.test(table(dat_c2_c3$cluster, dat_c2_c3$sma)[rowSums(table(dat_c2_c3$cluster, dat_c2_c3$sma)) != 0, colSums(table(dat_c2_c3$cluster, dat_c2_c3$sma)) != 0])
+
+
+``` 
+
+
+``` {r compare SMA across clusters}
+
+
+plot_violin_with_title <- function(data) {
+  dataset_name <- deparse(substitute(data))
+  
+  means <- data %>%
+    group_by(cluster) %>%
+    summarize(mean_sma = mean(as.numeric(sma)))
+
+  ggplot(data, aes(x = as.factor(cluster), y = as.numeric(sma), fill = as.factor(cluster))) +
+    geom_violin(trim = FALSE, color = NA) +
+    
+    geom_point(data = means,
+               aes(x = as.factor(cluster), y = mean_sma),
+               inherit.aes = FALSE,
+               color = "red", size = 3) +
+    
+    scale_x_discrete(name = "Cluster") +
+    scale_y_continuous(
+      name = "Self-reported social media addiction",
+      breaks = sort(unique(as.numeric(data$sma))),
+      labels = levels(data$sma)
+    ) + scale_fill_manual(
+    values = c(
+      "highSMA1" = "#B34CC2",
+      "highSMA2" = "#6BCB3D",
+      "highSMA3" = "#F4A300"
+    )) +
+
+    labs(title = dataset_name) +
+    theme_minimal() +
+    theme(legend.position = "none")
+}
+
+plot_violin_with_title(dat_train_smHrs)
+plot_violin_with_title(dat_test_smHrs)
+
+
+Fig04a_plot <- plot_violin_with_title(dat_test_smHrs)
+ggsave("figures/Fig04a.png", plot = Fig04a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+``` 
+
+
+
+
+``` {r compare time spent on social media between clusters 2}
+
+ggplot(dat_train_smHrs, aes(x = as.factor(cluster), y = sm_hrs_Numeric, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(adjust = 0.6, justification = -0.2, .width = 0, point_colour = NA) +
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+library(ggplot2)
+library(ggdist)
+library(ggpubr)
+
+# Define pairwise comparisons
+comparisons <- list(
+  c("highSMA1", "highSMA2"),
+  c("highSMA1", "highSMA3"),
+  c("highSMA1", "lowSMA"),
+  c("highSMA2", "highSMA3"),
+  c("highSMA2", "lowSMA"),
+  c("highSMA3", "lowSMA")
+)
+
+# Plot
+library(ggplot2)
+library(ggdist)
+library(ggpubr)
+
+# Define pairwise comparisons
+comparisons <- list(
+  c("highSMA1", "highSMA2"),
+  c("highSMA1", "highSMA3"),
+  c("highSMA1", "lowSMA"),
+  c("highSMA2", "highSMA3"),
+  c("highSMA2", "lowSMA"),
+  c("highSMA3", "lowSMA")
+)
+
+# Set y positions for each comparison so labels don't overlap
+y_positions <- max(dat_train_smHrs$sm_hrs_Numeric) + c(1, 2, 3, 4, 5, 6)  # adjust spacing as needed
+
+# Plot
+ggplot(dat_test_smHrs, aes(x = as.factor(cluster), y = sma, fill = as.factor(cluster))) +
+  ggdist::stat_halfeye(
+    adjust = 0.6, 
+    justification = -0.2, 
+    .width = 0, 
+    point_colour = NA
+  ) +  # density cloud
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.4) +  # boxplot
+  scale_x_discrete(name = "Cluster") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  stat_compare_means(
+    method = "t.test",
+    comparisons = comparisons,
+    label = "p.format",
+    y.position = y_positions
+  )
+
+
+
+``` 
+
+
+
+
+
+
+
+``` {r view time spent on social media and SMA between clusters}
+
+ggplot(dat_train_smHrs, aes(x = sma, y = sm_hrs_Numeric, color = cluster, group = cluster)) +
+  stat_summary(fun = mean, geom = "point", size = 2) +
+  stat_summary(fun = mean, geom = "line", linewidth = 0.8) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2) +
+  facet_wrap(~ dataset) +
+  scale_y_continuous(name = "Average Social Media Hours per Day") +
+  scale_x_discrete(name = "SMA Agreement Level") +
+  scale_color_brewer(palette = "Dark2") +
+  theme_minimal() +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+
+
+Fig04b_plot <- ggplot(dat_test_smHrs, aes(x = sma, y = sm_hrs_Numeric, color = cluster, group = cluster)) +
+  stat_summary(fun = mean, geom = "point", size = 2) +
+  stat_summary(fun = mean, geom = "line", linewidth = 0.8) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2) +
+  facet_wrap(~ dataset) +
+  scale_y_continuous(name = "Average Social Media Hours per Day") +
+  scale_x_discrete(name = "SMA Agreement Level") +
+  theme_minimal() +
+  scale_colour_manual(
+    values = c(
+      "highSMA1" = "#B34CC2",
+      "highSMA2" = "#6BCB3D",
+      "highSMA3" = "#F4A300"
+    )
+  ) +
+  theme(
+    legend.position = "none"   # removes the legend completely
+  )
+
+
+ggsave("figures/Fig04b.png", plot = Fig04b_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+``` 
+
+
+
+
+
+
+
+
+``` {r stats kendall}
+
+library(dplyr)
+library(rstatix)
+
+# Assuming dat_test_smHrs has variables: sma, sm_hrs_Numeric, cluster
+
+# Compute Kendall's tau for each cluster
+kendall_results <- dat_test_smHrs %>%
+  group_by(cluster) %>%
+  summarise(
+    kendall_test = list(cor.test(as.numeric(sma), sm_hrs_Numeric, method = "kendall")),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    tau = map_dbl(kendall_test, ~ .x$estimate),
+    p_value = map_dbl(kendall_test, ~ .x$p.value)
+  )
+
+kendall_results
+
+library(dplyr)
+
+# function to compute Kendall's tau and transform with Fisher's Z
+tau_fisher <- function(x, y) {
+  tau <- cor(as.numeric(x), y, method = "kendall")
+  # Fisher's Z transform
+  z <- 0.5 * log((1 + tau) / (1 - tau))
+  list(tau = tau, z = z)
+}
+
+# sample size adjusted SE for Kendall (approximate using Pearson's formula)
+se_fisher <- function(n) 1 / sqrt(n - 3)
+
+# compute Kendall's tau and Z for each cluster
+kendall_z <- dat_test_smHrs %>%
+  group_by(cluster) %>%
+  summarise(
+    n = n(),
+    res = list(tau_fisher(sma, sm_hrs_Numeric)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    tau = map_dbl(res, "tau"),
+    z = map_dbl(res, "z"),
+    se = se_fisher(n)
+  )
+
+kendall_z
+
+# pairwise comparisons
+pairwise_z <- expand.grid(cluster1 = kendall_z$cluster,
+                          cluster2 = kendall_z$cluster) %>%
+  filter(cluster1 < cluster2) %>%
+  rowwise() %>%
+  mutate(
+    z1 = kendall_z$z[kendall_z$cluster == cluster1],
+    z2 = kendall_z$z[kendall_z$cluster == cluster2],
+    se1 = kendall_z$se[kendall_z$cluster == cluster1],
+    se2 = kendall_z$se[kendall_z$cluster == cluster2],
+    z_diff = (z1 - z2) / sqrt(se1^2 + se2^2),
+    p_value = 2 * (1 - pnorm(abs(z_diff)))
+  )
+
+pairwise_z
+
+
+
+
+
+``` 
+
+
+``` {r stats kendall for test}
+
+library(dplyr)
+library(rstatix)
+
+# Assuming dat_test_smHrs has variables: sma, sm_hrs_Numeric, cluster
+
+# Compute Kendall's tau for each cluster
+kendall_results <- dat_test_smHrs %>%
+  group_by(cluster) %>%
+  summarise(
+    kendall_test = list(cor.test(as.numeric(sma), sm_hrs_Numeric, method = "kendall")),
+        n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    tau = map_dbl(kendall_test, ~ .x$estimate),
+    p_value = map_dbl(kendall_test, ~ .x$p.value)
+  )
+
+kendall_results
+
+kendall_results$pearson_r <- sin((pi* kendall_results$tau)/2 )
+kendall_results$z         <- correlation::z_fisher(kendall_results$pearson_r)
+kendall_results$z2         <- 0.5 * log((1 + kendall_results$pearson_r) / (1 - kendall_results$pearson_r))
+
+#  1 v 2
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "highSMA2")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "highSMA2")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+#  1 v 3
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "highSMA3")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "highSMA3")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  2 v 3
+ 
+z1 = filter(kendall_results, cluster == "highSMA2")$z
+z2 = filter(kendall_results, cluster == "highSMA3")$z
+
+n1 = filter(kendall_results, cluster == "highSMA2")$n
+n2 = filter(kendall_results, cluster == "highSMA3")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+#  1 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  2 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA2")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA2")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  3 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA3")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA3")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+``` 
+
+
+``` {r stats kendall for train}
+
+library(dplyr)
+library(rstatix)
+
+# Assuming dat_test_smHrs has variables: sma, sm_hrs_Numeric, cluster
+
+# Compute Kendall's tau for each cluster
+kendall_results <- dat_train_smHrs %>%
+  group_by(cluster) %>%
+  summarise(
+    kendall_test = list(cor.test(as.numeric(sma), sm_hrs_Numeric, method = "kendall")),
+        n = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    tau = map_dbl(kendall_test, ~ .x$estimate),
+    p_value = map_dbl(kendall_test, ~ .x$p.value)
+  )
+
+kendall_results
+
+kendall_results$pearson_r <- sin((pi* kendall_results$tau)/2 )
+kendall_results$z         <- correlation::z_fisher(kendall_results$pearson_r)
+kendall_results$z2         <- 0.5 * log((1 + kendall_results$pearson_r) / (1 - kendall_results$pearson_r))
+
+#  1 v 2
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "highSMA2")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "highSMA2")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+#  1 v 3
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "highSMA3")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "highSMA3")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  2 v 3
+ 
+z1 = filter(kendall_results, cluster == "highSMA2")$z
+z2 = filter(kendall_results, cluster == "highSMA3")$z
+
+n1 = filter(kendall_results, cluster == "highSMA2")$n
+n2 = filter(kendall_results, cluster == "highSMA3")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+#  1 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA1")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA1")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  2 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA2")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA2")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+
+#  3 v low
+ 
+z1 = filter(kendall_results, cluster == "highSMA3")$z
+z2 = filter(kendall_results, cluster == "lowSMA")$z
+
+n1 = filter(kendall_results, cluster == "highSMA3")$n
+n2 = filter(kendall_results, cluster == "lowSMA")$n
+# Standard error of the difference
+se_diff <- sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+
+# Z-score for the difference
+z_score <- (z1 - z2) / se_diff
+
+# P-value for a two-tailed test
+p_value <- 2 * pnorm(-abs(z_score))
+
+# Print results
+cat("Z-score:", z_score, "\n")
+cat("P-value:", p_value, "\n")
+
+``` 
+
+
+
+
+
+
+
+
+

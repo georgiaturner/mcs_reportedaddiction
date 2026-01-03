@@ -1,0 +1,282 @@
+---
+title: "explore_clustering_parameters_train_all"
+author: "Georgia Turner"
+date: "2023-04-27"
+output: html_document
+---
+
+In this script we answer RQ2:
+Do behavioural-emotional profiles differ across levels of self-reported SMA?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())    # clear environment
+set.seed(20230427) # set seed for any random sampling
+
+```
+
+```{r load packages, include = FALSE}
+
+library(tidyverse)
+library(VIM) # for KNN imputation
+library(cluster) # for similarity matrix for multidimensional scaling analysis
+library(vegan) # for MDS
+library(mclust) # for gaussian mixture modelling
+library(fclust) # for fuzzy clustering
+```
+
+
+## Load in processed data.
+
+``` {r load data}
+
+datproc_path <- "./../data_processed/"
+
+dataset_to_use <- "train-all" # train-all or test-all or train-clinical or test-clinical
+
+if (dataset_to_use == "train-all") {
+  
+  dat_imputed       <- read_csv(str_c(datproc_path, "2025-08-21_13-08train-all-imputed.csv"))
+  
+} else if (dataset_to_use == "test-all") {
+  
+  dat_imputed       <- read_csv(str_c(datproc_path, "2025-08-21_13-12test-all-imputed.csv"))
+  
+} else {
+  
+  stop("Use a valid value of 'dataset_to_use'.")
+}
+
+```
+
+First we reduce dimensionality using multidimensional scaling analysis. To determine the number of dimensions, we use a scree plot.
+
+
+``` {r multidimensional scaling}
+
+
+# Data setup
+mds_data     <- dplyr::select(dat_imputed, -mcsid_cm)
+dist_matrix  <- dist(mds_data)
+
+# Initialize MDS results storage
+mds_results  <- list()
+variance_df  <- data.frame()
+shepard_plots<- list()
+
+# Step 1: Run all MDS projections first (k = 2 to 8)
+for (k in 2:10) {
+  
+  print(str_c("Processing for k = ",k, " MDS dimensions"))
+  
+  # perform multidimensional scaling with euclidean distance
+
+  mds_k         <- cmdscale(dist_matrix, eig = TRUE, k = k)
+  
+  # calculate values to do variance explained plots
+  coords        <- mds_k$points
+  eigvals       <- mds_k$eig
+  var_explained <- eigvals / sum(eigvals)
+  
+  # Store results
+  mds_results[[as.character(k)]] <- list(
+    coords        = coords,
+    var_explained = var_explained,
+    cumvar        = sum(var_explained[1:k])
+  )
+  
+  # Save variance for scree plot
+  variance_df <- rbind(variance_df, data.frame(
+    Dimensions         = k,
+    CumulativeVariance = sum(var_explained[1:k])
+  ))
+  
+  # Shepard-like plot
+  d_orig    <- as.vector(dist_matrix)
+  d_mds     <- dist(coords)
+  d_mds_vec <- as.vector(d_mds)
+  
+  shepard_df <- data.frame(Original = d_orig, MDS = d_mds_vec)
+  
+  print("Processing linear model")
+  # Fit linear model
+  lm_model   <- lm(MDS ~ Original, data = shepard_df)
+  summary_lm <- summary(lm_model)
+
+  # Extract coefficients
+  intercept <- round(coef(lm_model)[1], 3)
+  slope     <- round(coef(lm_model)[2], 3)
+
+  # Extract p-value for slope
+  p_value   <- round(summary_lm$coefficients[2, 4], 4)
+
+  # Create the regression equation text
+  eq_label <- paste0("y = ", slope, "x + ", intercept, "\n",
+                   "p = ", p_value)
+
+  print("Processed linear model")
+
+  # Plot
+  shepard_plot <- ggplot(shepard_df, aes(x = Original, y = MDS)) +
+    geom_point(alpha = 0.1) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    geom_smooth(method = "lm", color = "blue", se = FALSE) +
+    annotate("text", x = Inf, y = -Inf, label = eq_label, hjust = 1.1, vjust = -1.1, size = 4, color = "blue") +
+    labs(title = paste("Shepard-like Plot (k =", k, ")"),
+       x = "Original Distances", y = "MDS Distances") +
+    theme_minimal()
+
+  shepard_plots[[as.character(k)]] <- shepard_plot
+}
+
+```
+
+
+Check how much of variance MDS results explained. 
+
+``` {r check MDS results with variance explained}
+
+ggplot(variance_df, aes(x = Dimensions, y = CumulativeVariance)) +
+  geom_line() + geom_point() +
+  geom_hline(yintercept = 0.9, linetype = "dotted", color = "red") +
+  labs(title = "Cumulative Variance Explained by Classical MDS",
+       x = "Number of Dimensions",
+       y = "Cumulative Variance Explained") +
+  theme_minimal()
+
+
+``` 
+
+Check Shepard plots with various dimensions.
+
+```{r check MDS results with shepard plot 2}
+print(shepard_plots[["2"]])
+```
+
+```{r check MDS results with shepard plot 8}
+print(shepard_plots[["8"]])
+```
+
+```{r check MDS results with shepard plot 10}
+print(shepard_plots[["10"]])
+```
+
+Now apply Gaussian mixture modelling in R.
+
+
+``` {r perform gaussian mixture modelling}
+
+# Initialize results
+gmm_metrics_by_k <- list()
+
+# Loop through MDS dimension k = 2:8
+for (k in 2:10) {
+  
+  print(str_c("Processing for k = ",k, " MDS dimensions"))
+
+  coords  <- mds_results[[as.character(k)]]$coords
+  bic_vec <- c()
+  sil_vec <- c()
+  fuzzy_sil_vec <- c()
+  
+  # Try G = 1:10 clusters
+  for (g in 1:10) {
+    
+    print(str_c("Processing for g = ",g, " GMM clusters"))
+
+    
+    gmm_model <- Mclust(coords, G = g, verbose = FALSE)
+    bic_val   <- gmm_model$bic[1]  # For this G, best model BIC
+    bic_vec   <- c(bic_vec, bic_val)
+    
+    # Silhouette (only if G > 1)
+    if (g > 1) {
+      sil <- silhouette(gmm_model$classification, dist(coords))
+      sil_vec <- c(sil_vec, mean(sil[, 3]))
+    } else {
+      sil_vec <- c(sil_vec, NA)
+    }
+    
+    # Fuzzy silhouette (only if G > 1)
+    if (g > 1) {
+      # Posterior probabilities (fuzzy memberships)
+      U <- gmm_model$z  
+
+      # Compute fuzzy silhouette
+      fs_index <- SIL.F(Xca = coords, U = U, alpha = 1)
+      fuzzy_sil_vec <- c(fuzzy_sil_vec, fs_index)
+    } else {
+      fuzzy_sil_vec <- c(fuzzy_sil_vec, NA)
+    }
+
+  }
+  
+  gmm_metrics_by_k[[as.character(k)]] <- data.frame(
+    Dimensions = k,
+    G = 1:10,
+    BIC = bic_vec,
+    Silhouette = sil_vec,
+    FuzzySilhouette = fuzzy_sil_vec
+  )
+}
+
+# Combine into one data frame
+gmm_all <- bind_rows(gmm_metrics_by_k)
+
+``` 
+
+
+``` {r plot gaussian mixture modelling results BIC for diff clusters}
+
+FigS01a_plot <- ggplot(gmm_all, aes(x = G, y = BIC, group = Dimensions, color = as.factor(Dimensions))) +
+  geom_line() + geom_point() +
+  labs(title = "BIC vs. Number of Clusters (G)",
+       x = "Number of Clusters (G)", y = "BIC",
+       color = "MDS Dimensions (k)") +
+      scale_color_viridis_d(option = "plasma") +
+  theme_minimal()
+
+ggsave("figures/FigS01a.png", plot = FigS01a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+
+```
+
+
+
+``` {r plot gaussian mixture modelling results silhouette coefficient for diff clusters}
+FigS01b_plot <- ggplot(gmm_all, aes(x = G, y = Silhouette, group = Dimensions, color = as.factor(Dimensions))) +
+  geom_line() + geom_point() +
+  labs(title = "Traditional (Crisp) Silhouette Score vs. Number of Clusters (G)",
+       x = "Number of Clusters (G)", y = "Crisp Silhouette Score",
+       color = "MDS Dimensions (k)") +
+    scale_color_viridis_d(option = "plasma") +
+
+  theme_minimal()
+
+ggsave("figures/FigS01b.png", plot = FigS01b_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+```
+
+``` {r plot gaussian mixture modelling results FUZZY silhouette coefficient for diff clusters}
+
+
+FigS01c_plot <- ggplot(gmm_all, aes(x = G, y = FuzzySilhouette, group = Dimensions, color = as.factor(Dimensions))) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Fuzzy Silhouette Score vs. Number of Clusters (G)",
+    x = "Number of Clusters (G)",
+    y = "Fuzzy Silhouette Score",
+    color = "MDS Dimensions (k)"
+  ) +
+  scale_color_viridis_d(option = "plasma") +
+  theme_minimal()
+
+
+ggsave("figures/FigS01c.png", plot = FigS01c_plot, bg = "white", width = 7, height = 4.5, units = "in")
+
+```
+
+Given that the silhouette coefficient was well below 0.5, as pre-registered we now progress to repeat the analysis with the subgroup of participants with mental health difficulties.
+
+

@@ -1,0 +1,809 @@
+---
+title: "clean_mcs"
+author: "Georgia Turner"
+date: "2023-03-21"
+output: html_document
+---
+
+In this script we clean the seventh wave of the Millennium Cohort Study dataset (Age 17 Sweep). It is set up in a similar structure to the cleaning script for MCS in Orben et al Nat Comms 2022.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())    # clear environment
+set.seed(20230321) # set seed for any random sampling
+
+```
+
+```{r load packages, include = FALSE}
+
+library(tidyverse)
+library(foreign)
+
+```
+
+# Loading and Merging
+
+First we load data which is kept in separate SPSS data files downloaded directly from the UK data service. We do not load all files provided by MCS as we do not use some of the files.
+
+## Load Questionnaire & Derived Variable data files
+
+```{r load data }
+
+## define function to load data from MCS Raw data folder
+load_mcs_raw <- function(raw_dat_path = "./../../../data/2023_MCS_Age17/UKDA-8682-spss/spss/spss25/", filename) {
+  dat             <- read.spss(str_c(raw_dat_path, filename),
+                            #   use.value.labels = FALSE,
+                               to.data.frame    = TRUE,
+                               use.missings     = TRUE,
+                               )
+  names(dat)      <- tolower(names(dat)) # makes names all lower case to ease manipulation
+  dat                                    # return the dataset.
+}
+
+## Use function to load each dataset
+### mcs7
+dat_cm_deriv         <- load_mcs_raw(filename = "mcs7_cm_derived.sav");
+dat_cm_interv        <- load_mcs_raw(filename = "mcs7_cm_interview.sav");
+dat_fam_deriv        <- load_mcs_raw(filename = "mcs7_family_derived.sav");
+dat_fam_interv       <- load_mcs_raw(filename = "mcs7_family_interview.sav");
+#dat_hhgrid_mcs7      <- load_mcs_raw(filename = "mcs7_hhgrid.sav");
+dat_par_cm_interv    <- load_mcs_raw(filename = "mcs7_parent_cm_interview.sav");
+#dat_par_deriv        <- load_mcs_raw(filename = "mcs7_parent_derived.sav");
+dat_par_interv       <- load_mcs_raw(filename = "mcs7_parent_interview.sav");
+### mcs1 
+# for ethnicity variables:
+dat_cm_deriv_mcs1    <- load_mcs_raw(raw_dat_path = "./../../../data/2023_MCS_Age9m/UKDA-4683-spss/spss/spss25/",
+                                     filename     = "mcs1_cm_derived.sav")
+# for sex assigned at birth:
+dat_hhgrid_mcs1      <- load_mcs_raw(raw_dat_path = "./../../../data/2023_MCS_Age9m/UKDA-4683-spss/spss/spss25/",
+                                     filename     = "mcs1_hhgrid.sav")
+### mcs longitudinal family file (for investigating number of productive cases & weights)
+dat_longitudinal_fam <- load_mcs_raw(raw_dat_path = "./../../../data/2023_MCS_LongitudinalFamilyFile/UKDA-8172-spss/spss/spss25/",
+                                     filename     = "mcs_longitudinal_family_file.sav")
+dat_longitudinal_fam$mcsid      <- gsub(" ", "", dat_longitudinal_fam$mcsid, fixed = TRUE) # remove random spaces in mcsid if they exist, sometimes they do. We do this for all others dfs in the function 'make_mcsid_...' but we never apply that function to this df so just do it here
+
+###### mcs6 files for checking ###### 
+dat_cm_deriv_mcs6    <- load_mcs_raw(raw_dat_path = "./../../../data/2023_MCS_Age14/UKDA-8156-spss/spss/spss25/",
+                                     filename     = "mcs6_cm_derived.sav")
+dat_cm_interv_mcs6   <- load_mcs_raw(raw_dat_path = "./../../../data/2023_MCS_Age14/UKDA-8156-spss/spss/spss25/",
+                                     filename     = "mcs6_cm_interview.sav")
+
+
+```
+
+## Basic cleaning: combining datasets
+
+To combine the datasets, we first make an identification variable for each child. We cannot use the family identification variables ('mcsid') because they obfuscate twins/triplets, so have to connect this with the cohort member number within the family ('gcnum00'). 
+We also make an identification variable for each parent which will allow us to combine the parent_cm level and parent level datasets. This is because the main vs. partner respondents in the parent_cm level can switch from year to year vs. their number in a family which stays the same (as in the parent_level).
+
+```{r function parent/child identification variable}
+
+## this function takes the data and creates the parent/child identification variable, mcsid_cm or mcsid_par, respectively, by combining the family identifier, mcs_id, with the cohort member number within an MCS family, gcnum00, in the case of a child, or the parent number, gpnum00, for the parent.
+## (note that gcnum00/gpnum00 is different each sweep - it is 'g' because this is the seventh sweep; in the sixth sweep it was 'fcnum00'/'fpnum00'; in the first sweep it was 'acnum00', which is why we here have different functions for the mcs7 vs. mcs1 variables.)
+
+make_mcsid_cm_mcs7 <- function(data) { 
+  data$mcsid      <- gsub(" ", "", data$mcsid, fixed = TRUE) # remove random spaces in mcsid if they exist, sometimes they do
+  data$mcsid_cm   <- paste(as.character(data$mcsid), as.character(data$gcnum00), sep = "_")
+  data
+}
+
+make_mcsid_par_mcs7 <- function(data) {
+  data$mcsid      <- gsub(" ", "", data$mcsid, fixed = TRUE) # remove random spaces in mcsid if they exist, sometimes they do
+  data$mcsid_par  <- paste(as.character(data$mcsid), as.character(data$gpnum00), sep = "_") # gpnum00 not gcnum00
+  data
+}
+
+make_mcsid_cm_mcs1 <- function(data) { 
+  data$mcsid      <- gsub(" ", "", data$mcsid, fixed = TRUE) # remove random spaces in mcsid if they exist, sometimes they do
+  data$mcsid_cm   <- paste(as.character(data$mcsid), as.character(data$acnum00), sep = "_")
+  data
+}
+
+
+```
+
+First, some quick helper code when searching a dataset, to find a variable name and its column index if needed.
+
+```{r search dataset for var}
+
+## might find this code useful to look for variables:
+
+# find the column names in dataset which contain "sati"
+# colnames(dat_cm_interv)[grep("sati", colnames(dat_cm_interv))] 
+
+# find the index of that column
+# which(colnames(dat_cm_interv) == "gcsati00")
+
+# check across all DFs loaded
+
+# Use lapply to apply the function to all data frames
+result <- lapply(ls(), function(x) {
+  if (is.data.frame(get(x))) {
+    # Get the column names that match the pattern
+    matching_cols <- colnames(get(x))[grep("M10002P", colnames(get(x)))]
+    # Return a named list with the data frame name and matching column names
+    return(list(df_name = x, matching_cols = matching_cols))
+  } else {
+    # Return NULL if the object is not a data frame
+    return(NULL)
+  }
+})
+
+# Remove any NULL values from the result list
+result <- result[!sapply(result, is.null)]
+
+# Print the result
+result
+
+```
+
+## Basic cleaning: child level
+
+We now select the variables of interest from the child-level datasets, which include the MCS7 child interview (dat_cm_interv), then the MCS7 child-level derived variables (dat_cm_deriv), then the MCS1 household grid dataset (for the gender assigned at birth) (dat_hhgrid_mcs1) and then the MCS1 derived dataset (for the ethnicity.)
+
+```{r extract vars of interest from child level datasets }
+
+
+#### CM interview dataset (all CM interviews combined in this dataset)
+
+dat_cm_interv_cleaned <- make_mcsid_cm_mcs7(dat_cm_interv) %>% 
+  dplyr::select(
+    mcsid,           # household level identifier
+    mcsid_cm,        # new cohort-level identifier
+  
+    ######## Social media addiction
+    gcsocm00,        # I think I am addicted to social media
+    
+    ######## Time spent on social media
+    gcsome00,        # on a normal week day, how many hours on social networking or messaging sites or Apps
+    
+    ######## Raw data for gender
+    ## gbid - not available currently. We planned to use this in prereg as a sensitivity analysis for sex vs. gender, however the GBID variable is in the secure access dataset. Therefore instead, we will use the variable ahcsex00 from the MCS1 hhgrid to get the person's sex.
+    gcgnid00,         # gender ID
+    
+    ########
+  
+    ######## Raw data for behavioural-emotional profiles
+    gcsati00,         # SELF ESTEEM: On the whole, I am satisfied with myself.
+    gcgdql00,         # SELF ESTEEM: I feel I have a number of good qualities.
+    gcdowl00,         # SELF ESTEEM: I am able to do things as well as most other people.
+    gcvalu00,         # SELF ESTEEM: I am a person of value.
+    gcgdsf00,         # SELF ESTEEM: I feel good about myself.
+  
+    gcdean00,         # CLINICAL DEP/ANX: Has a doctor ever told you that you suffer from depression or serious anxiety?
+  
+    gcshcu00,         # SELF HARM: cut or stabbed self in last year
+    gcshbu00,         # SELF HARM: burned self
+    gcshbr00,         # SELF HARM: bruised self
+    gcshod00,         # SELF HARM: overdose
+    gcshpu00,         # SELF HARM: pulled out hair,
+    gcshrm00,         # SELF HARM: other
+  
+    gcsuic00,         # SUICIDE ATTEMPT
+  
+    gcrska00,         # RISK PREFERENCE 
+    gcrskb00,         # RISK PREFERENCE 
+    gcrskc00,         # RISK PREFERENCE 
+    gcrskd00,         # RISK PREFERENCE 
+    gcrske00,         # RISK PREFERENCE 
+    gcrskf00,         # RISK PREFERENCE 
+    gcrskg00,         # RISK PREFERENCE 
+    gcrskh00,         # RISK PREFERENCE 
+    gcrski00,         # RISK PREFERENCE 
+    gcrskj00,         # RISK PREFERENCE 
+
+    gcprfa00,         # TIME PREFERENCE
+    gcprfb00,         # TIME PREFERENCE
+    gcprfc00,         # TIME PREFERENCE
+    gcprfd00,         # TIME PREFERENCE
+    gcprfe00,         # TIME PREFERENCE
+    gcprff00,         # TIME PREFERENCE
+    gcprfg00,         # TIME PREFERENCE
+    gcprfh00,         # TIME PREFERENCE
+    gcprfi00,         # TIME PREFERENCE
+    gcprfj00,         # TIME PREFERENCE
+
+    gcsxid00,         # SEXUAL IDENTITY
+    
+    gcsaff00,         # SOCIAL PROVISION: I have family and friends who make me feel safe, secure an happy
+    gctrss00,         # SOCIAL PROVISION: There is someone I trust [...]
+    gcncls00,         # SOCIAL PROVISION: There is noone I feel close to
+    
+    gcvicg00,         # VICTIMISATION: insulted you [...]
+    gcvicb00,         # VICTIMISATION: spread gossip [...]
+    gcvica00,         # VICTIMISATION: physical violence [...]
+    gcvicc00,         # VICTIMISATION: hit you with a weapon [...]
+    gcvice00,         # VICTIMISATION: stolen something [...]
+    gcvich00,         # VICTIMISATION: harassed [...]
+    gcvicp00,         # VICTIMISATION: sent pictures of you or rumours about you [...]
+    gcvicf00,         # VICTIMISATION: unwelcome sexual approach
+    gcvics00,         # VICTIMISATION: sexual assault
+    
+    gclwpa00,         # Do you live with your parents?
+    
+    gccare00,         # Caring responsibilities
+    
+    #### get job variables which will be used to make MACT (derived job variable, described in MCS7 Young Person Interview page 15)
+    gceduc00, gctrin00, gcapnt00, gctrne00, gcjobs00, gcmnac00, gcsekr00, gchmfm00,
+    
+    gcsxev00,         # Ever had sexual intercourse
+    
+    gcsmok00,         # I have never smoked cigarettes, etc
+    
+    gcvape00,         # I have never vaped, etc.
+    
+    gcalcd00,         # Had an alcoholic drink, etc.
+    
+    gcdrua00,         # DRUGS: cannabis
+    gcdrub00,         # DRUGS
+    gcdruc00,         # DRUGS
+    gcdrud00,         # DRUGS 
+    gcdrul00,         # DRUGS
+    gcdrus00,         # DRUGS
+    gcdrui00,         # DRUGS
+    gcdruj00,         # DRUGS
+    gcdruk00,         # DRUGS
+    
+    gcstol00,         # RISKY BEHAVIOURS: taken something from a shop without paying
+    gcspry00,         # RISKY BEHAVIOURS: graffiti
+    gcdamg00,         # RISKY BEHAVIOURS: vandalism
+    gcrobh00,         # RISKY BEHAVIOURS: rob a home
+    gcjyrd00,         # RISKY BEHAVIOURS: stolen a vehicle
+    gcfire00,         # RISKY BEHAVIOURS: set fire to something
+    gccred00,         # RISKY BEHAVIOURS: used someone's credit card
+    gchack00,         # RISKY BEHAVIOURS: hacked someone's device
+    gcvirs00,         # RISKY BEHAVIOURS: sent internet viruses
+    
+    gchitt00,         # ANTI-SOC BEHAVIOUR: pushed/hit someone
+    gcwepn00,         # ANTI-SOC BEHAVIOUR: used a weapon
+    gcstln00,         # ANTI-SOC BEHAVIOUR: stolen from someone
+    gchrsd00,         # ANTI-SOC BEHAVIOUR: harassed online
+    gcrmrs00,         # ANTI-SOC BEHAVIOUR: spread online rumours
+    gcsexa00,         # ANTI-SOC BEHAVIOUR: sexual assault
+    
+    gcphex00,         # physical activity
+    
+    gcsqlt00,         # sleep quality
+    
+    gcdisc00,         # ACTIVITIES: party
+    gcthea00,         # ACTIVITIES: theatre
+    gcspor00,         # ACTIVITIES: watch sport
+    gcband00,         # ACTIVITIES: play in band
+    gcmgig00,         # ACTIVITIES: go to gig
+    gcrjoy00,         # ACTIVITIES: read
+    gcorga00,         # ACTIVITIES: youth club
+    gclibr00,         # ACTIVITIES: library
+    gcmusm00,         # ACTIVITIES: museum
+    gcvolw00,         # ACTIVITIES: voluntary work
+    gcpolm00,         # ACTIVITIES: political meeting
+    gcrlsv00,         # ACTIVITIES: religious service
+    gcspfd00,         # ACTIVITIES: friends
+    
+    gctvho00,         # TV hours
+    gccomh00,         # computer gaming hours
+    
+    gcgama00,         # GAMBLING: fruit machine
+    gcgmbl00,         # GAMBLING: friend bet
+    gcgaem00,         # GAMBLING: betting shop
+    gcgamj00,         # GAMBLING: other gambling
+    
+    gcknif00,         # weapon carrying
+    
+    gcgang00,         # gang membership
+    
+    gccaut00,         # police caution
+    
+    gcares00,         # been arrested
+    
+    ##### job variables - which will use to construct a derived job variable MACT, which is referred to in MCS7 Young Person Interview Page 15 but is not available as a derived variable, so we need to construct it ourselves.
+    gceduc00,         # in education
+    gctrin00,         # in training
+    gcapnt00,         # in apprenticeship
+    gcjobs00,         # paid job
+    gcmnac00,         # more than one activity
+    gcsekr00,         # seeking work
+    gchmfm00,         # looking after home or family full time
+    
+    ######## Raw data for SES
+    gchoms00,         # been homeless
+    
+    gcocin00         # earned income 
+    
+
+)
+
+
+# Add the derived MACT job variable based on the variables in the young person interview
+dat_cm_interv_cleaned <- dat_cm_interv_cleaned %>%
+  mutate(
+    mact = case_when(
+      # Rule NA: all relevant fields are NA
+      is.na(gceduc00) & is.na(gcjobs00) & is.na(gcapnt00) & is.na(gctrin00) &
+        is.na(gctrne00) & is.na(gcmnac00) & is.na(gcsekr00) & is.na(gchmfm00) ~ NA_integer_,
+      
+      # Rule 9
+      gceduc00 == "Yes" & (gctrin00 == "Yes" | gcapnt00 == "Yes") & gctrne00 == "Part of the same" & (is.na(gcjobs00) | gcjobs00 != "Yes") |
+        gcmnac00 == "Going to school or college and doing a training course/scheme or apprenticeship as part of the same thing" ~ 9L,
+      
+      # Rule 1
+      gceduc00 == "Yes" & (is.na(gcjobs00) | gcjobs00 != "Yes") & (is.na(gcapnt00) | gcapnt00 != "Yes") & (is.na(gctrin00) | gctrin00 != "Yes") |
+        gcmnac00 == "Going to school or college" ~ 1L,
+      
+      # Rule 2
+      (is.na(gceduc00) | gceduc00 != "Yes") & gcjobs00 == "Yes" & (is.na(gcapnt00) | gcapnt00 != "Yes") & (is.na(gctrin00) | gctrin00 != "Yes") |
+        gcmnac00 == "Working in a paid job" ~ 2L,
+      
+      # Rule 3
+      gceduc00 == "Yes" & gcjobs00 == "Yes" |
+        gcmnac00 == "Going to school or college part time and working as part of the same thing" ~ 3L,
+      
+      # Rule 4
+      (is.na(gceduc00) | gceduc00 != "Yes") & (is.na(gcjobs00) | gcjobs00 != "Yes") & gcapnt00 == "Yes" & (is.na(gctrin00) | gctrin00 != "Yes") |
+        gcmnac00 == "Doing an apprenticeship [MNAC]" ~ 4L,
+      
+      # Rule 5
+      (is.na(gceduc00) | gceduc00 != "Yes") & (is.na(gcjobs00) | gcjobs00 != "Yes") & (is.na(gcapnt00) | gcapnt00 != "Yes") & gctrin00 == "Yes" |
+        gcmnac00 == "Doing a training course/scheme [MNAC]" ~ 5L,
+      
+      # Rule 6
+      gcsekr00 == "Yes" ~ 6L,
+      
+      # Rule 7
+      gchmfm00 == "Yes" ~ 7L,
+      
+      # Rule 8
+      (is.na(gceduc00) | gceduc00 != "Yes") & 
+        (is.na(gcjobs00) | gcjobs00 != "Yes") & 
+        (is.na(gcapnt00) | gcapnt00 != "Yes") & 
+        (is.na(gctrin00) | gctrin00 != "Yes") &
+        (is.na(gcsekr00) | gcsekr00 != "Yes") &
+        (is.na(gchmfm00) | gchmfm00 != "Yes") ~ 8L
+    ),
+    mact = factor(mact,
+                  levels = 1:9,
+                  labels = c("EDUCATION",
+                             "JOB",
+                             "SCHOOL AND WORK",
+                             "APPRENTICESHIP",
+                             "TRAINING",
+                             "UNEMPLOYED AND SEARCHING FOR PAID WORK",
+                             "LOOKING AFTER HOME OR FAMILY FULL TIME",
+                             "NO CURRENT ACTIVITY",
+                             "SCHOOL AND TRAINING"))
+  )
+
+
+#### CM derived dataset
+
+dat_cm_deriv_cleaned <- make_mcsid_cm_mcs7(dat_cm_deriv) %>% 
+  dplyr::select(
+    mcsid,
+    mcsid_cm,
+
+    ######## Raw data for behavioural-emotional profiles
+    gdckessl,         # depression: Kessler K6 score
+    gdwemwbs,         # Warwick-Edinburgh wellbeing questionnaire: sum of raw mental wellbeing scores transformed to metric scale
+    
+    gemotion_c,       # CM SDQ subscale: emotion
+    gconduct_c,       # CM SDQ subscale: conduct
+    ghyper_c,         # CM SDQ subscale: hyperactivity
+    gpeer_c,          # CM SDQ subscale: peer problems
+    gprosoc_c,        # CM SDQ subscale: prosocial
+    
+    gemotion,         # Par SDQ subscale: emotion
+    gconduct,         # PAR SDQ subscale: conduct
+    ghyper, 
+    gpeer, 
+    gprosoc,
+    
+    gdcopen,          # PERSONALITY: openness
+    gdcconsc,         # PERSONALITY: conscientiousness
+    gdcextrav,        # PERSONALITY: extraversion
+    gdcagree,         # PERSONALITY: agreeableness
+    gdcneurot,        # PERSONALITY: neuroticism
+    
+    gdrestr,          # self control
+    
+    
+  
+  
+) 
+
+### mcs1 hhgrid dataset
+
+dat_hhgrid_mcs1_cleaned <- make_mcsid_cm_mcs1(dat_hhgrid_mcs1) %>%
+  filter(acnum00 != 0) %>% # filter out the non-CM rows (i.e. other family members than cohort member)
+  dplyr::select(
+    mcsid,
+    mcsid_cm,
+    ahcsex00          # sex assigned at birth; replace GBID in the prereg as GBID was in secure access dataset.
+  )
+
+## mcs1 derived dataset
+
+dat_cm_deriv_mcs1_cleaned <- make_mcsid_cm_mcs1(dat_cm_deriv_mcs1) %>%
+  dplyr::select(
+    mcsid, 
+    mcsid_cm,
+    adc11e00          # eleven category ethnicity
+  )
+
+```
+
+## Basic cleaning: parent-child level
+
+This is the file where the parents are interviewed about the child (as opposed to about themselves, which is just the parent level). This file does not only include the full (main) parent questionnaire, but also the partner questionnaire about the child. Therefore up to 2 questionnaires were filled out per child.  
+If there are two variables, we just take the one from the parent with the lower gpnum00 (as this broadly indicates the parent is more central in the child's life)
+
+```{r extract vars of interest from parent cm level datasets}
+
+dat_par_cm_interv_cleaned <- dat_par_cm_interv %>%
+  make_mcsid_cm_mcs7() %>% 
+  make_mcsid_par_mcs7() %>%
+  dplyr::select(
+    
+    mcsid,
+    mcsid_cm,
+    mcsid_par,
+    gpnum00,
+    
+    ######## Raw data for behavioural-emotional profiles
+    gpschc00,           # parent CM closeness
+    
+    gptaim00,           # parent talking to CM
+    
+    gpwhet00,           # parent monitoring CM
+    
+    gpwhut00,           # curfew
+
+  ) %>%
+  
+  group_by(mcsid_cm) %>%
+  slice_min(gpnum00)
+
+```
+
+## Basic cleaning: parent level
+
+This is the file where the parents are interviewed about themselves. In previous MCS sweeps there was both parent and proxy_partner, but here there is only the parent dataset (as it says in the MCS7 user guide: 'The questionnaires could not be completed by a proxy'.)
+
+```{r extract vars of interest from parent level datasets}
+
+dat_par_interv_cleaned <- dat_par_interv %>%
+  make_mcsid_par_mcs7() %>% # make parent-specific rather than child-specific ID because there is no info about CMs here.
+  dplyr::select(
+    mcsid,              # no mcsid_cm as this is about the parent only
+    mcsid_par,
+    
+    ######## Raw data for SES
+    gpcom100,           # parent employment
+    
+    gprepa00,           # payment sources
+    
+    gpmafi00,           # perceived financial situation
+    
+  
+    gproow00,           # home ownership
+    
+    gpntco00,           # TOTAL INCOME: 2 parent fam
+    gpntcp00,           # TOTAL INCOME: 2 par fam, time period
+    gpntcq00,           # TOTAL INCOME: 2 par fam, other time period
+    gpntlp00,           # TOTAL INCOME: 1 par fam
+    gpntpp00,           # TOTAL INCOME: 1 par fam, time period
+    gpntpo00            # TOTAL INCOME: 1 par fam, other time period
+    
+  )
+```
+
+
+## Basic cleaning: household level
+
+```{r extract vars of interest from family level datasets}
+
+dat_fam_deriv_cleaned <- dat_fam_deriv %>%
+  mutate(mcsid = gsub(" ", "", mcsid, fixed = TRUE),
+         mcsid = as.character(mcsid)) %>%
+  dplyr::select(
+    mcsid,
+    ######## Raw data for behavioural-emotional variables
+    gdhtys00,         # 1 or 2 par family  
+    gdoths00,         # N siblings
+
+  )
+
+
+dat_fam_interv_cleaned <- dat_fam_interv %>%
+  mutate(mcsid = gsub(" ", "", mcsid, fixed = TRUE),
+         mcsid = as.character(mcsid)) %>%
+    dplyr::select(
+    mcsid,
+    
+    ######## Raw data for SES 
+    ghroma,           # N rooms in home
+    # there was no resi variable as this was in the Secure Access dataset.
+    )
+
+```
+
+## Merge questionnaires at the child level
+
+We now merge the separate cleaned questionnaires. We do this by first using full_join to link up all the datasets with child level data - i.e. child level, parent CM level. This ensures that any child information gets kept in the dataset even if the child is not present in one of the datasets. In particular, there were no CAWI (web), CAPI (face to face) or CASI (self completion) cohort member responses for 607 cases, although there is a row in the derived dataset for every cohort member whose family was productive in some way e.g. someone participated in parent or household interview. Therefore there are 607 more rows in the dat_cm_deriv_cleaned than the dat_cm_interv_cleaned, who are missing from this dataset (this was explained in private communication with the UKDS, at replyto@ukdataservice.ac.uk). These 607 cohort members will therefore be blank for the interview columns in the merged dataset.
+
+We merge the data using the child identification variable, mcsid_cm. We delete mcsid from the extra datasets we are merging so that it is not duplicated ("data[,-which(names(data) == "mcsid")]").
+
+After we have merged the child level data, we will subsequently use left_join to match this to the parent level and household level datasets, which could have multiple CM per parent or household.
+
+Note that there are different numbers of CMs in each dataset which will account for some missing values. Specifically: 
+ - dat_cm_deriv_cleaned has 10952 unique CMs (as shown by unique mcsid_cm)
+ - dat_cm_interv_cleaned has 10345; because there were 607 cases who had families which were productive in some way (so shown in dat_cm_deriv) but the CM did not provide CAWI, CAPI, CASI questionnaires, so they are in the derived but not cm_interview dataset (this was said in private communication with UKDS)
+ - dat_par_cm_interv_cleaned has 10004. I assume this is for the same reason - ie missing parent questionnaires for some participants who were nevertheless in the derived dataset. 
+ 
+- dat_cm_interv_cleaned has all the mcsids that are in dat_par_cm_interv_cleaned, and then dat_cm_deriv_cleaned contains all mcsids that are in dat_cm_intev_cleaned and more (can check this using setdiff)
+
+Note that the following code has to be in separate lines not a pipe as otherwise the computer might crash with too big a dataframe.
+
+
+``` {r merge datasets at child level}
+
+
+dat_cm <- dplyr::full_join(dat_cm_deriv_cleaned,
+                           dat_cm_interv_cleaned[,-which(names(dat_cm_interv_cleaned) == "mcsid")], by = "mcsid_cm")
+
+
+dat_cm <- dplyr::full_join(dat_cm,
+                           dat_par_cm_interv_cleaned[,-which(names(dat_par_interv_cleaned) == "mcsid")], by = "mcsid_cm")
+
+# left join not full join for the mcs1 ones because we don't want to add in all the extra mcsids that are only in mcs1 and not in mcs7
+dat_cm <- dplyr::left_join(dat_cm,
+                           dat_cm_deriv_mcs1_cleaned[,-which(names(dat_cm_deriv_mcs1_cleaned) == "mcsid")], by = "mcsid_cm")
+
+dat_cm <- dplyr::left_join(dat_cm,
+                           dat_hhgrid_mcs1_cleaned[,-which(names(dat_hhgrid_mcs1_cleaned) == "mcsid")], by = "mcsid_cm")
+
+#columns_to_exclude             <- c("mcsid", "mcsid_cm")
+#columns_to_widen               <- colnames(dat_par_cm_interv_cleaned)[!(colnames(dat_par_cm_interv_cleaned) %in% columns_to_exclude)]
+#wide_dat_par_cm_interv_cleaned <- dat_par_cm_interv_cleaned %>% pivot_wider(names_from = mcsid_par, values_from = (all_of(columns_to_widen)))
+
+
+```
+
+## Merge datasets at the parent level.
+
+We now use left_join to merge the child level with parent level datasets, which have the same household (mcsid) and the same parent id (mcsid_par) as in the dat_cm (the parent id is from the parent_cm level dataset).  
+
+``` {r add merged datasets at par level }
+
+
+dat_cm_par <- dplyr::left_join(dat_cm,
+                           dat_par_interv_cleaned[,-which(names(dat_cm_deriv_cleaned) == "mcsid")], by = "mcsid_par")
+                           
+
+```
+
+## Merge datasets at the household level.
+
+We then use left_join to match the merged child and parent level dataset with the household level datasets, using mcsid.
+
+``` {r add merged datasets at family level}
+
+dat_cm_par_hh <- dplyr::left_join(dat_cm_par, dat_fam_interv_cleaned, by = "mcsid") %>%
+  dplyr::left_join(dat_fam_deriv_cleaned, by = "mcsid")
+
+dat_cm_par_hh <- dplyr::left_join(dat_cm_par_hh, dat_longitudinal_fam, by = "mcsid")
+
+
+```
+
+# Cleaning measurements. 
+
+In the rest of the script we clean measures to make sure they are in the right format. We also rename variables to make them more usable.
+
+First, rename them.
+
+``` {r rename variables}
+
+dat_all <- dat_cm_par_hh %>%
+  dplyr::rename(
+    
+    ### Gender variables
+    gender_id      = gcgnid00,    # gender identity
+    birthsex_id    = ahcsex00,    # gender assigned at birth 
+    
+    ### Ethnicity variables
+    eleven_category_ethnicity = adc11e00, # 11 category ethnicity, not yet recoded into 5 UK census categories
+    
+    ### Social media addiction variable
+    sma = gcsocm00,        # I think I am addicted to social media
+    
+    ### time spent on social media
+    sm_hrs             = gcsome00, # on a normal week day, how many hours on social networking or messaging sites or Apps
+    
+    ### Behavioural-emotional variables (in same order as pre-reg)
+    ## Mental Health
+    kessl_depression   = gdckessl, # score on Kessler Depression qnr
+    warwick_wellbeing  = gdwemwbs, # score on Warwick-Edinburgh mental wellbeing qnr
+    self_esteem_1      = gcsati00, # On the whole I am satisfied with myself
+    self_esteem_2      = gcgdql00, # I feel I have a number of good qualities
+    self_esteem_3      = gcdowl00, # I am able to do things as well as most other people
+    self_esteem_4      = gcvalu00, # I am a person of value
+    self_esteem_5      = gcgdsf00, # I feel good about myself
+    clin_dep_anx       = gcdean00, # Has a doctor ever told you you sugger from depression or serious anxiety
+    self_harm_1        = gcshcu00, # In last year, have you cut or stabbed self
+    self_harm_2        = gcshbu00, # burned self
+    self_harm_3        = gcshbr00, # bruised or pinched self
+    self_harm_4        = gcshod00, # overdosed on tablets
+    self_harm_5        = gcshpu00, # pulled out hair
+    self_harm_6        = gcshrm00, # hurt self in other way
+    suic_attempt       = gcsuic00, # attempted to end life
+    cm_sdq_emotion     = gemotion_c, # child-reported SDQ emotion subscale
+    cm_sdq_conduct     = gconduct_c, # child-reported SDQ conduct problems subscale
+    cm_sdq_hyper       = ghyper_c,   # child-reported SDQ hyperactivity subscale
+    cm_sdq_peer        = gpeer_c,    # child-reported SDQ peer problems subscale
+    cm_sdq_prosoc      = gprosoc_c,  # child-reported SDQ prosociality subscale
+    pa_sdq_emotion     = gemotion,   # parent-reported SDQ emotion subscale
+    pa_sdq_conduct     = gconduct,   # parent-reported SDQ conduct subscale
+    pa_sdq_hyper       = ghyper,     # parent-reported SDQ hyperactivity subscale
+    pa_sdq_peer        = gpeer,      # parent-reported SDQ peer problems subscale
+    pa_sdq_prosoc      = gprosoc,    # parent_reported SDQ prosociality subscale
+    ## Personality and Identity
+    personality_open   = gdcopen,    # Big Five Personality subscale: openness
+    personality_conscientious = gdcconsc,  # Big Five Personality subscale: conscientiousness
+    personality_extravert     = gdcextrav, # Big Five Personality subscale: extraversion
+    personality_agreeable     = gdcagree,  # Big Five Personality subscale: agreeableness
+    personality_neurot        = gdcneurot, # Big Five Personality subscale: neuroticism
+    self_control       = gdrestr,    # Sum of scores on Brief Self Control scale - CHECK
+    risk_pref_01        = gcrska00,   # 50-50 chance of £240 or £132 for certain
+    risk_pref_02        = gcrskb00,   # 50-50 chance of £240 or £120 for certain
+    risk_pref_03        = gcrskc00,   # 50-50 chance of £240 or £108 for certain
+    risk_pref_04        = gcrskd00,   # 50-50 chance of £240 or £96 for certain
+    risk_pref_05        = gcrske00,   # 50-50 chance of £240 or £84 for certain
+    risk_pref_06        = gcrskf00,   # 50-50 chance of £240 or £72 for certain
+    risk_pref_07        = gcrskg00,   # 50-50 chance of £240 or £60 for certain
+    risk_pref_08        = gcrskh00,   # 50-50 chance of £240 or £48 for certain
+    risk_pref_09        = gcrski00,   # 50-50 chance of £240 or £36 for certain
+    risk_pref_10        = gcrskj00,   # 50-50 chance of £240 or £24 for certain
+    time_pref_01        = gcprfa00,   # £50 in 2 months or £50 in 4 months
+    time_pref_02        = gcprfb00,   # £50 in 2 months or £52 in 4 months
+    time_pref_03        = gcprfc00,   # £50 in 2 months or £55 in 4 months
+    time_pref_04        = gcprfd00,   # £50 in 2 months or £60 in 4 months
+    time_pref_05        = gcprfe00,   # £50 in 2 months or £70 in 4 months
+    time_pref_06        = gcprff00,   # £50 in 2 months or £80 in 4 months
+    time_pref_07        = gcprfg00,   # £50 in 2 months or £90 in 4 months
+    time_pref_08        = gcprfh00,   # £50 in 2 months or £100 in 4 months
+    time_pref_09        = gcprfi00,   # £50 in 2 months or £120 in 4 months
+    time_pref_10       = gcprfj00,   # £50 in 2 months or £150 in 4 months
+    sexuality          = gcsxid00,   # sexuality
+    ## Peer Relationships
+    social_provision_safe_happy  = gcsaff00,   # I have family and friends who make me feel safe, secure and happy
+    social_provision_trust       = gctrss00,   # There is someone I trust whom I would turn to for advice if I were having problems
+    social_provision_noone_close = gcncls00,   # There is noone I feel close to
+    victimisation_insults        = gcvicg00,   # In the past 12 months has anyone: insulted you, called you names, threatened or shouted at you in a public place, at school, college or anywhere else
+    victimisation_gossip         = gcvicb00,   # spread gossip about you, ignored you or you've experienced emotional abuse
+    victimisation_violence       = gcvica00,   # been physically violent towards you e.g. pushed, shoved, hit, slapped or punched you
+    victimisation_weapon         = gcvicc00,   # hit you with or used a weapon against you
+    victimisation_theft          = gcvice00,   # stolen something from you e.g. a mobile phone, money etc
+    victimisation_harass         = gcvich00,   # harassed or bothered you via a mobile phone or email
+    victimisation_pics           = gcvicp00,   # sent pictures of you or rumours about you via phone, email, social media or online
+    victimisation_sexapproach    = gcvicf00,   # made an unwelcome sexual approach to you
+    victimisation_sexassault     = gcvics00,   # assaulted you sexually
+    ## Family Relationships
+    n_parents                    = gdhtys00,   # one or two parent/carer family
+    n_siblings                   = gdoths00,   # number of siblings in household
+    livewith_parents             = gclwpa00,   # live with parents
+    caring_responsibility        = gccare00,   # do you regularly look after anyone who is ill, disabled or elderly and in need of care, without being paid
+    par_reported_closeness       = gpschc00,   # overall, how close would you say you are to CM
+    par_reported_talking         = gptaim00,   # overall, how often do you talk to CM about things that are important to them
+    par_reported_monitoring      = gpwhet00,   # when CM goes out, how often do you know where they are going
+    par_reported_curfew          = gpwhut00,   # when CM goes out, do you ever set a time for them to be back by
+    ## Behaviours
+    # MACT?
+    # The MACT is a derived variable from other job variables - it is not included in the UKDS derived variables file - but we constructed it abouve ourselves by combining the original variables, as described in MCS7 young person Interview on Page 15. 
+    doing_with_time              = mact,
+    
+    sex_intercourse              = gcsxev00,   # have you ever had sexual intercourse with someone
+    smoking                      = gcsmok00,   # please choose: I have never smoked cigarettes; I have only ever tried smoking cigarettes once; etc
+    vaping                       = gcvape00,   # as above for e-cigarettes
+    alcohol                      = gcalcd00,   # have you ever had an alcoholic drink that is more than a few sips
+    drug_cannabis                = gcdrua00,   # have you ever taken cannabis
+    drug_cocaine                 = gcdrub00,   # cocaine
+    drug_lsd                     = gcdruc00,   # lsd
+    drug_ecstasy                 = gcdrud00,   # ecstasy
+    
+    # although preregistered, we exclude heroin, crack and meth as these are in secure dataset not this one
+    # drug_heroin
+    # drug_crack                   = gcdruf
+    drug_speed                   = gcdrul00,   # speed
+    # drug_meth                    = gcdru
+    drug_semeron                 = gcdrus00,   # semeron
+    drug_ket                     = gcdrui00,   # ketamine
+    drug_meph                    = gcdruj00,   # mephedrone
+    drug_psychoact               = gcdruk00,   # psychoactive substance
+    risky_shoplift               = gcstol00,   # in the last 12 months have you done any of these things: taken something from a shop without paying for it
+    risky_graffiti               = gcspry00,   # written things or spray painted on a building, fence or train or anywhere else where you shouldn't have
+    risky_vandal                 = gcdamg00,   # deliberately damaged something in a public place that didn't belong to you, for examply by burning, smashing or breaking things like cars, bus shelters and rubbish bins
+    risky_robhome                = gcrobh00,   # gone into someone's home without their permission because you wanted to steal or damage something
+    risky_robvehicle             = gcjyrd00,   # stolen a vehicle that didn't belong to you
+    risky_fire                   = gcfire00,   # deliberately set fire to something that you shouldn't have
+    risky_creditcard             = gccred00,   # used someone else's credit/debit card or bank account details, to buy things, or obtain money, without the owner's permissin
+    risky_hack                   = gchack00,   # accessed, or hacked into, someone else's internet-enabled device (e.g. computer, tablet, mobile phone, games console), e-mail or social networking account without their permission
+    risky_webvirus               = gcvirs00,   # used the internet to send viruses, spyware or other harmful software/malware, to deliberately damage or infect other computers
+    antisocial_hit               = gchitt00,   # in the last 12 months have you done any of the following things: pushed or shoved/hit/slapped/punched someone
+    antisocial_weapon            = gcwepn00,   # hit someone with or used a weapon
+    antisocial_theft             = gcstln00,   # stolen something from someone e.g. a mobile phone, money etc
+    antisocial_webharass         = gchrsd00,   # harassed or bothered someone via mobile phone or email
+    antisocial_webpics           = gcrmrs00,   # sent pictures or spread rumours about someone via phone, email, social media or online
+    antisocial_sexual            = gcsexa00,   # made an unwelcome sexual approach or assaulted someone sexually
+    exercise                     = gcphex00,   # how many days last week did you do at least one hour of mdoerate to vigorous physical activity
+    sleep_quality                = gcsqlt00,   # sleep quality in past month
+    activity_party               = gcdisc00,   # how often do you do the following activities: go to a party, dance, house party or nightclub
+    activity_theatre             = gcthea00,   # go to the theatre
+    activity_watchsport          = gcspor00,   # go to watch life sport
+    activity_music               = gcband00,   # sing in a choir or play in a band or orchestra
+    activity_gig                 = gcmgig00,   # go to a live music concert or gig
+    activity_read                = gcrjoy00,   # read for enjoyment
+    activity_organised           = gcorga00,   # go to youth clubs, explorer scouts, senior guides or other organised activities
+    activity_library             = gclibr00,   # go to a library
+    activity_museum              = gcmusm00,   # go to museums or galleries, visit a historic place or stately home
+    activity_volunteering        = gcvolw00,   # do voluntary or community work
+    activity_political           = gcpolm00,   # go to a political meeting, march, rally or demonstration
+    activity_religious           = gcrlsv00,   # attend a religious service
+    activity_friends             = gcspfd00,   # spend time with friends (outside of school or work)
+    television_hrs               = gctvho00,   # hours watching television on a weekday
+    gaming_hrs                   = gccomh00,   # hours gaming on a weekday
+    gambling_1                   = gcgama00,   # spent own money on one of the following in past 4 weeks: fruit machines
+    gambling_2                   = gcgmbl00,   # placing a private bet for money (e.g. with friends)
+    gambling_3                   = gcgaem00,   # placing a bet at a betting shop (e.g. on football or horseracing)
+    gambling_4                   = gcgamj00,   # any other gambling e.g. online
+    weapon_carry                 = gcknif00,   # in the past 12 months have you carried a knife or other weapon
+    gang_member                  = gcgang00,   # are you a member of a street gang
+    police_warning               = gccaut00,   # have you ever been given a formal warning or caution by a police officer
+    police_arrest                = gcares00,   # have you ever been arrested by a police officer and taken to a police station
+    
+    ### SES Variables
+    # resi ?
+    n_rooms_in_home              = ghroma,     # how many rooms are there in your home, not counting kitchens, bathrooms, toilets, halls and garages
+    homelessness                 = gchoms00,   # has there ever been a time when you were homeless
+    income_cm                    = gcocin00,   # do you receive any income from paid work at all
+    employment_par               = gpcom100,   # parent employment status: employment, self-employment, looking after family, etc
+    incomesource_par             = gprepa00,   # parent income sources: do you currently receive any regular payment from any of the following sources: regular cash help from parents; regular cash help from other relatives; etc.
+    perceived_finances_par       = gpmafi00,   # how well would you say you are managing financially these days
+    home_own_par                 = gproow00,   # do you own or rent your home or have some other arrangement
+    household_income_1           = gpntco00,   # take-home income: 2 partner household
+    household_income_2           = gpntcp00,   # period of take-home income: 2 partner household
+    household_income_3           = gpntcq00,   # period of take-home income: 2 partner household, other
+    household_income_4           = gpntlp00,   # take-home income: 1 parent household
+    household_income_5           = gpntpp00,   # period of take-home income: 1 parent household
+    household_income_6           = gpntpo00,   # period of take-home income: 1 parent household, other
+    
+    
+    
+  )
+  
+  
+```
+
+
+
+# Save processed dataset.
+
+We save it along with the date and time, so as not to over-write previous iterations of that script
+
+``` {r save processed dataset}
+# temporarily get rid of duplicates here
+
+#dat_all <- dat_all[!duplicated(dat_all$mcsid_cm),]
+
+save_path <- "./../data_processed/"
+
+write.csv(dat_all,str_c(save_path, format(Sys.time(), "%Y-%m-%d_%H-%M"), "mcs_processed.csv"), 
+          fileEncoding = "UTF-8",
+          row.names = FALSE)
+
+dat_all_saved <- dat_all
+```
+
+
+
+
+
+
