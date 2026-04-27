@@ -13,7 +13,7 @@ First, set up document:
 
 knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())    # clear environment
-set.seed(20230427) # set seed for any random sampling
+set.seed(20230427) # set seed for any random samplings
 
 ```
 
@@ -29,6 +29,7 @@ library(glmnet)
 library(fastDummies)
 library(officer)
 library(flextable)
+library(gridExtra)
 
 source('00-functions.R')
 
@@ -322,19 +323,19 @@ Compare MDS dimensions for all:
 set.seed(55)
 
 varCorrs_all <- plot_mds_variable_correlations(
-  mds_train = dat_imputed_all_train_mds$points,
-  mds_test  = dat_imputed_all_test_mds_points,
-  vars_train = dplyr::select(dat_imputed_all_train, -mcsid_cm),
-  vars_test  = dplyr::select(dat_imputed_all_test, -mcsid_cm),
+  mds_train   = dat_imputed_all_train_mds$points,
+  mds_test    = dat_imputed_all_test_mds_points,
+  vars_train  = dplyr::select(dat_imputed_all_train, -mcsid_cm),
+  vars_test   = dplyr::select(dat_imputed_all_test, -mcsid_cm),
   title_train = "All Train",
   title_test  = "All Test"
 )
 
 FigS02a_plot <-  plot_mds_variable_correlations(
-  mds_train = dat_imputed_all_train_mds$points,
-  mds_test  = dat_imputed_all_test_mds_points,
-  vars_train = dplyr::select(dat_imputed_all_train, -mcsid_cm),
-  vars_test  = dplyr::select(dat_imputed_all_test, -mcsid_cm),
+  mds_train   = dat_imputed_all_train_mds$points,
+  mds_test    = dat_imputed_all_test_mds_points,
+  vars_train  = dplyr::select(dat_imputed_all_train, -mcsid_cm),
+  vars_test   = dplyr::select(dat_imputed_all_test, -mcsid_cm),
   title_train = "",
   title_test  = "",
     top_n = 30,
@@ -344,7 +345,7 @@ FigS02a_plot <-  plot_mds_variable_correlations(
     var_renames
 )$p_test
 
-ggsave("figures/FigS02a.png", plot = FigS02a_plot, bg = "white",  width = 7, height = 4.5, units = "in")
+ggsave("figures/FigS02a.pdf", plot = FigS02a_plot, bg = "white",  width = 7, height = 4.5, units = "in")
 
 FigS03a_plot <-  plot_mds_variable_correlations(
   mds_train = dat_imputed_all_train_mds$points,
@@ -358,9 +359,10 @@ FigS03a_plot <-  plot_mds_variable_correlations(
     var_renames
 )$p_test
 
-ggsave("figures/FigS03a.png", plot = FigS03a_plot, bg = "white",  width = 7, height = 20, units = "in")
+ggsave("figures/FigS03a.pdf", plot = FigS03a_plot, bg = "white",  width = 7, height = 20, units = "in")
 
 ```
+
 Now for high SMA
 
 ```{r mds highSMA feature loading}
@@ -390,7 +392,7 @@ Fig02a_plot <-  plot_mds_variable_correlations(
   )$p_test
 
 
-ggsave("figures/Fig02a.png", plot = Fig02a_plot, bg = "white", width = 7, height = 4.5, units = "in")
+ggsave("figures/Fig02a.pdf", plot = Fig02a_plot, bg = "white", width = 7, height = 4.5, units = "in")
 
 FigS03b_plot <-  plot_mds_variable_correlations(
   mds_train = dat_imputed_highSMA_train_mds$points,
@@ -404,7 +406,7 @@ FigS03b_plot <-  plot_mds_variable_correlations(
     var_renames
 )$p_test
 
-ggsave("figures/FigS03b.png", plot = FigS03b_plot, bg = "white",  width = 7, height = 20, units = "in")
+ggsave("figures/FigS03b.pdf", plot = FigS03b_plot, bg = "white",  width = 7, height = 20, units = "in")
 
 
 ```
@@ -428,7 +430,6 @@ dat_imputed_all_test_gmm2  <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_all_t
 
 dat_imputed_highSMA_train_gmm3 <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_highSMA_train_mds$points, warwick_wellbeing = dat_imputed_highSMA_train$warwick_wellbeing, G = 3)
 dat_imputed_highSMA_test_gmm3  <- fit_and_relabel_gmm_by_wellbeing(dat_imputed_highSMA_test_mds_points, warwick_wellbeing = dat_imputed_highSMA_test$warwick_wellbeing, G = 3)
-
 
 
 ```
