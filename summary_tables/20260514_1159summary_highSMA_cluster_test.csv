@@ -1,0 +1,11 @@
+"","Category","C1_N","C1_prop","C2_N","C2_prop","C3_N","C3_prop","n_C1","C1","n_C2","C2","n_C3","C3"
+"1","Female",626,0.655,49,0.389,164,0.777,NA,NA,NA,NA,NA,NA
+"2","Male",319,0.334,75,0.595,38,0.18,NA,NA,NA,NA,NA,NA
+"3","Other gender",4,0.004,0,0,6,0.028,NA,NA,NA,NA,NA,NA
+"4","Prefer not to say",6,0.006,2,0.016,3,0.014,NA,NA,NA,NA,NA,NA
+"5","Asian or Asian British",92,0.099,6,0.049,25,0.121,NA,NA,NA,NA,NA,NA
+"6","Black, Black British, Caribbean or African",40,0.043,2,0.016,4,0.019,NA,NA,NA,NA,NA,NA
+"7","Mixed or multiple ethnic groups",28,0.03,4,0.033,1,0.005,NA,NA,NA,NA,NA,NA
+"8","Other Ethnic Group",3,0.003,0,0,1,0.005,NA,NA,NA,NA,NA,NA
+"9","White",766,0.825,110,0.902,175,0.85,NA,NA,NA,NA,NA,NA
+"10","SES PC1",NA,NA,NA,NA,NA,NA,955,0.052,126,-0.133,211,-0.237

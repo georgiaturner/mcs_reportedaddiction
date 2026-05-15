@@ -1,9 +1,4 @@
 
- 
-### colour palettes
-
-
-
 
 ################################################################################
 # Perform MDS functions
@@ -46,7 +41,6 @@ flip_mds_dimensions <- function(mds_result, flip_dims = c(1, 2)) {
   mds_result$points[, flip_dims] <- -mds_result$points[, flip_dims]
   return(mds_result)
 }
-
 
 plot_mds_variable_correlations <- function(
     vars_train, vars_test, mds_train, mds_test,
@@ -136,38 +130,11 @@ plot_mds_variable_correlations <- function(
   ))
 }
 
-fit_and_relabel_gmm_by_wellbeing <- function(mds_points, warwick_wellbeing, G = 2, seed = 3) {
-  set.seed(seed)
-  
-  # Fit GMM model
-  gmm_model <- Mclust(mds_points, G = G, verbose = FALSE)
-  
-  # Create data frame from MDS points and add cluster labels and wellbeing scores
-  df <- as.data.frame(mds_points)
-  colnames(df) <- paste0("Dim", seq_len(ncol(df)))
-  df$OriginalCluster <- gmm_model$classification
-  df$warwick_wellbeing <- warwick_wellbeing
-  
-  # Compute mean wellbeing per cluster
-  cluster_means <- aggregate(warwick_wellbeing ~ OriginalCluster, data = df, mean)
-  
-  # Determine new order: cluster with highest mean wellbeing gets label 1, etc.
-  new_order <- cluster_means$OriginalCluster[order(-cluster_means$warwick_wellbeing)]
-  label_map <- setNames(seq_along(new_order), new_order)
-  
-  # Remap classification labels
-  gmm_model$classification <- label_map[as.character(gmm_model$classification)]
-  gmm_model$z <- gmm_model$z[, new_order]
-  
-  return(gmm_model)
-}
-
-
 plot_mds_clusters <- function(
     mds_result_points,
     gmm_model,
     title = "MDS with GMM Clustering",
-    cluster_colours = NULL  # 👈 new argument
+    cluster_colours = NULL  # 
 ) {
   # Build data frame
   mds_df <- as.data.frame(mds_result_points)
@@ -175,11 +142,13 @@ plot_mds_clusters <- function(
   
   # Add original GMM classification
   mds_df$Cluster <- as.factor(gmm_model$classification)
-  mds_df$Uncertainty <- gmm_model$uncertainty
+  # mds_df$Uncertainty <- gmm_model$uncertainty
   
   # Base plot
   p <- ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster)) +
-    geom_point(aes(alpha = 1 - Uncertainty), size = 3) +
+    # geom_point(aes(alpha = 1 - Uncertainty), size = 3) +
+    geom_point(aes(alpha = 1), size = 3) +
+    
     stat_ellipse(aes(group = Cluster), color = "black", linetype = "dashed", linewidth = 1) +
     scale_alpha_continuous(range = c(0.4, 1), guide = "none") +
     theme_minimal() +
@@ -200,45 +169,97 @@ plot_mds_clusters <- function(
   return(p)
 }
 
+plot_mds_clusters <- function(
+    mds_result_points,
+    gmm_model_points,
+    gmm_model_ellipses,
+    title = "Cluster Plot",
+    cluster_colours = NULL,
+    level = 0.95
+) {
+  
+  # Build data frame
+  mds_df <- as.data.frame(mds_result_points)
+  colnames(mds_df) <- paste0("Dim", 1:ncol(mds_df))
+  
+  # Add original GMM classification
+  mds_df$Cluster <- as.factor(gmm_model_points$classification)
+  
+  # Base plot
+  p <- ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster)) +
+    
+    geom_point(aes(alpha = 1), size = 3) +
+    
+    scale_alpha_continuous(range = c(0.4, 1), guide = "none") +
+    
+    theme_minimal() +
+    
+    labs(
+      title = title,
+      x = "Dimension 1",
+      y = "Dimension 2",
+      color = "Cluster"
+    )
+  
+  # Apply custom cluster colours if provided
+  if (!is.null(cluster_colours)) {
+    p <- p + scale_color_manual(values = cluster_colours)
+  } else {
+    p <- p + scale_color_brewer(palette = "Set1")
+  }
+  
+  # -------------------------------------------------
+  # Draw in GMM ellipses
+  # -------------------------------------------------
+  
+  means <- gmm_model_ellipses$parameters$mean
+  sigma <- gmm_model_ellipses$parameters$variance$sigma
+
+  G <- dim(sigma)[3]
+  
+  ellipse_df <- data.frame()
+  
+  for (k in 1:G) {
+    
+    ell <- ellipse::ellipse(
+      sigma[1:2, 1:2, k],
+      centre = means[1:2, k],
+      level = level
+    )
+    
+    ell <- as.data.frame(ell)
+    
+    colnames(ell) <- c("Dim1", "Dim2")
+    
+    ell$Cluster <- as.factor(k)
+    
+    ellipse_df <- rbind(ellipse_df, ell)
+  }
+  
+  p <- p +
+    geom_path(
+      data = ellipse_df,
+      aes(x = Dim1, y = Dim2, group = Cluster),
+      color = "black",
+      linetype = "dashed",
+      linewidth = 1,
+      inherit.aes = FALSE
+    )
+  
+  return(p)
+}
+
 ################################################################################
 # GMM functions
 ################################################################################
 
-fit_and_relabel_gmm_by_dim1 <- function(mds_points, G = 2, seed = 3) {
+relabel_gmm_by_wellbeing <- function(mds_points, gmm_model, warwick_wellbeing, G = 2, seed = 3) {
   set.seed(seed)
-  
-  # Fit GMM model
-  gmm_model <- Mclust(mds_points, G = G, verbose = FALSE)
-  
-  # Create data frame from MDS points and add cluster labels
-  df <- as.data.frame(mds_points)
-  colnames(df) <- paste0("Dim", seq_len(ncol(df)))
-  df$OriginalCluster <- gmm_model$classification
-  
-  # Compute mean Dim1 per cluster
-  cluster_means <- aggregate(Dim1 ~ OriginalCluster, data = df, mean)
-  
-  # Determine new order: cluster with lowest mean Dim1 gets label 1, etc.
-  new_order <- cluster_means$OriginalCluster[order(cluster_means$Dim1)]
-  label_map <- setNames(seq_along(new_order), new_order)
-  
-  # Remap classification labels
-  gmm_model$classification <- label_map[as.character(gmm_model$classification)]
-  gmm_model$z <- gmm_model$z[,new_order]
-  
-  return(gmm_model)
-}
-
-fit_and_relabel_gmm_by_wellbeing <- function(mds_points, warwick_wellbeing, G = 2, seed = 3) {
-  set.seed(seed)
-  
-  # Fit GMM model
-  gmm_model <- Mclust(mds_points, G = G, verbose = FALSE)
   
   # Create data frame from MDS points and add cluster labels and wellbeing scores
-  df <- as.data.frame(mds_points)
-  colnames(df) <- paste0("Dim", seq_len(ncol(df)))
-  df$OriginalCluster <- gmm_model$classification
+  df                   <- as.data.frame(mds_points)
+  colnames(df)         <- paste0("Dim", seq_len(ncol(df)))
+  df$OriginalCluster   <- gmm_model$classification
   df$warwick_wellbeing <- warwick_wellbeing
   
   # Compute mean wellbeing per cluster
@@ -250,165 +271,11 @@ fit_and_relabel_gmm_by_wellbeing <- function(mds_points, warwick_wellbeing, G = 
   
   # Remap classification labels
   gmm_model$classification <- label_map[as.character(gmm_model$classification)]
-  gmm_model$z <- gmm_model$z[, new_order]
+  gmm_model$z              <- gmm_model$z[, new_order]
   
   return(gmm_model)
 }
 
-################################################################################
-# elastic net regularised regression functions
-################################################################################
-
-################################################################################
-# choose alpha and lambda parameters
-
-get_best_alpha_lambda <- function(params_path, whichReg_string) {
-  # Step 1: load mse results
-  mse_file <- list.files(
-    params_path, 
-    pattern = paste0("boostrap_results_", whichReg_string, "_df_mse"), 
-    full.names = TRUE
-  )
-  mse_df <- read.csv(mse_file)
-  
-  # Step 2: find alpha with lowest mean_mse
-  best_alpha <- mse_df$alpha[which.min(mse_df$mean_mse)]
-  
-  # Step 3: load lambda results
-  lambda_file <- list.files(
-    params_path, 
-    pattern = paste0("boostrap_results_", whichReg_string, "_df_lambda_1se"), 
-    full.names = TRUE
-  )
-  lambda_df <- read.csv(lambda_file)
-  
-  # Step 4: select mean_lambda for best alpha
-  best_lambda <- lambda_df$mean_lambda[which.min(abs(lambda_df$alpha - best_alpha))]
-  
-  # Return results
-  return(data.frame(alpha = best_alpha, mean_lambda = best_lambda))
-}
-
-
-
-fit_elastic_net_CV <- function(x, y, family = family) {
-  
-  x <- x %>% as.matrix()
-  
-  # Initialize output
-  list.of.fits        <- list()
-  results             <- data.frame()
-  coef_matrices       <- list()
-  selected_predictors <- list()
-  
-  for (i in 0:10) {
-    alpha_val <- i / 10
-    fit.name  <- paste0("alpha", alpha_val)
-    
-    print(fit.name)
-    
-    # Fit model
-    fit <- cv.glmnet(
-      x, y,
-      type.measure = "mse",
-      alpha        = alpha_val,
-      family       = family
-    )
-    
-    list.of.fits[[fit.name]] <- fit
-    
-    
-    # Extract the cvm corresponding to lambda.1se
-    lambda_1se  <- fit$lambda.1se
-    lambda_idx  <- which(fit$lambda == lambda_1se)
-    mse         <- fit$cvm[lambda_idx]
-    
-    # Store MSE
-    temp     <- data.frame(alpha = alpha_val, 
-                           mse = mse, 
-                           fit.name = fit.name,
-                           lambda_1se = lambda_1se)
-    results  <- rbind(results, temp)
-    
-    
-    # Extract non-zero coefficients (excluding intercept)
-    
-    coef_matrix    <- as.matrix(coef(fit, s = "lambda.1se"))
-    non_zero_coefs <- rownames(coef_matrix)[coef_matrix[, 1] != 0]
-    non_zero_coefs <- setdiff(non_zero_coefs, "(Intercept)")
-    
-    coef_matrices[[fit.name]]       <- coef_matrix
-    selected_predictors[[fit.name]] <- non_zero_coefs
-  }
-  
-  return(list(
-    fits       = list.of.fits,
-    results    = results,
-    coef_matrices = coef_matrices,
-    predictors    = selected_predictors
-  ))
-  
-}
-
-bootstrap_alpha_selection <- function(x, y, B = 50, family = "gaussian") {
-  
-  alpha_choices     <- seq(0, 1, by = 0.1)
-  alpha_selection   <- numeric(B)
-  mse_matrix        <- matrix(NA, nrow = B, ncol = length(alpha_choices))
-  lambda_1se_matrix <- matrix(NA, nrow = B, ncol = length(alpha_choices))
-  
-  alpha_labels <- paste0("alpha", alpha_choices)
-  
-  colnames(mse_matrix)        <- alpha_labels
-  colnames(lambda_1se_matrix) <- alpha_labels
-  
-  for (b in 1:B) {
-    set.seed(1000 + b)  # Make reproducible but vary seeds
-    
-    #### fit elastic net models
-    
-    fit <- fit_elastic_net_CV(x, y, family = family)
-    
-    best_row           <- fit$results[which.min(fit$results$mse), ]
-    best_alpha         <- best_row$alpha
-    alpha_selection[b] <- best_alpha
-    
-    # Match each alpha's metrics
-   # fit_order <- match(alpha_labels, fit$results$fit.name)
-    
-    mse_matrix[b, ] <- fit$results$mse
-    lambda_1se_matrix[b, ] <- fit$results$lambda_1se
-    
-    cat("Iteration", b, "best alpha =", best_alpha, "\n")
-  }
-  
-  # Frequency and summary
-  alpha_freq <- table(alpha_selection)
-  avg_mse    <- colMeans(mse_matrix, na.rm = TRUE)
-  sd_mse     <- apply(mse_matrix, 2, sd, na.rm = TRUE)
-  
-  avg_lambda_1se <- colMeans(lambda_1se_matrix, na.rm = TRUE)
-  sd_lambda_1se  <- apply(lambda_1se_matrix, 2, sd, na.rm = TRUE)
-  
-  return(list(
-    alpha_freq = alpha_freq,
-    avg_mse = avg_mse,
-    sd_mse = sd_mse,
-    alpha_selection = alpha_selection,
-    mse_matrix = mse_matrix,
-    lambda_1se_matrix = lambda_1se_matrix,
-    avg_lambda_1se = avg_lambda_1se,
-    sd_lambda_1se = sd_lambda_1se
-  ))
-}
-
-
-
-
-
-# ===============================
-# Functions
-# ===============================
 
 # Return cluster report as string
 report_clusters <- function(train_gmm, test_gmm, train_data, test_data, gmm_name) {
@@ -456,131 +323,6 @@ report_silhouette <- function(train_gmm, test_gmm, train_mds, test_mds, gmm_name
   )
 }
 
-
-plot_bootstrap_alpha_results <- function(bootstrap_results, save_path = "./../data_processed/explore_elastic_net_parameters/") {
-  
-  # Capture object name automatically
-  results_name <- deparse(substitute(bootstrap_results))
-  timestamp <- format(Sys.time(), "%Y-%m-%d_%H-%M")
-  
-  alpha_values <- seq(0, 1, by = 0.1)
-  
-  # -------------------------------
-  # Plot 1: Mean MSE vs Alpha
-  df_mse <- data.frame(
-    alpha = alpha_values,
-    mean_mse = bootstrap_results$avg_mse,
-    sd_mse = bootstrap_results$sd_mse
-  )
-  
-  p1 <- ggplot(df_mse, aes(x = alpha, y = mean_mse)) +
-    geom_line() +
-    geom_point() +
-    geom_errorbar(aes(ymin = mean_mse - sd_mse, ymax = mean_mse + sd_mse), width = 0.02) +
-    labs(
-      title = "Mean MSE vs Alpha (with SD error bars)",
-      x = "Alpha",
-      y = "Mean MSE"
-    ) +
-    theme_minimal()
-  
-  print(p1)
-  ggsave(file.path(save_path, paste0(timestamp, "_", results_name, "_plot_mse.png")),
-         plot = p1, width = 7, height = 5, dpi = 300, bg = "white")
-  
-  # -------------------------------
-  # Plot 2: Frequency of Best Alpha Values
-  df_freq <- as.data.frame(bootstrap_results$alpha_freq)
-  colnames(df_freq) <- c("alpha", "frequency")
-  df_freq$alpha <- as.numeric(as.character(df_freq$alpha))
-  
-  p2 <- ggplot(df_freq, aes(x = factor(alpha), y = frequency)) +
-    geom_bar(stat = "identity", fill = "steelblue") +
-    labs(
-      title = "Frequency of Best Alpha Values Across Bootstraps",
-      x = "Alpha",
-      y = "Frequency"
-    ) +
-    theme_minimal()
-  
-  print(p2)
-  ggsave(file.path(save_path, paste0(timestamp, "_", results_name, "_plot_freq.png")),
-         plot = p2, width = 7, height = 5, dpi = 300, bg = "white")
-  
-  # -------------------------------
-  # Plot 3: Mean Lambda 1SE vs Alpha
-  df_lambda_1se <- data.frame(
-    alpha = alpha_values,
-    mean_lambda = bootstrap_results$avg_lambda_1se,
-    sd_lambda = bootstrap_results$sd_lambda_1se
-  )
-  
-  p3 <- ggplot(df_lambda_1se, aes(x = alpha, y = mean_lambda)) +
-    geom_line() +
-    geom_point() +
-    geom_errorbar(aes(ymin = mean_lambda - sd_lambda, ymax = mean_lambda + sd_lambda), width = 0.02) +
-    labs(
-      title = "Mean Lambda.1se vs Alpha (with SD error bars)",
-      x = "Alpha",
-      y = "Mean Lambda.1se"
-    ) +
-    theme_minimal()
-  
-  print(p3)
-  ggsave(file.path(save_path, paste0(timestamp, "_", results_name, "_plot_lambda.png")),
-         plot = p3, width = 7, height = 5, dpi = 300, bg = "white")
-  
-  # -------------------------------
-  # Save DataFrames as CSVs
-  write.csv(df_mse,
-            file = file.path(save_path, paste0(timestamp, "_", results_name, "_df_mse.csv")),
-            fileEncoding = "UTF-8", row.names = FALSE)
-  
-  write.csv(df_freq,
-            file = file.path(save_path, paste0(timestamp, "_", results_name, "_df_freq.csv")),
-            fileEncoding = "UTF-8", row.names = FALSE)
-  
-  write.csv(df_lambda_1se,
-            file = file.path(save_path, paste0(timestamp, "_", results_name, "_df_lambda_1se.csv")),
-            fileEncoding = "UTF-8", row.names = FALSE)
-  
-  message("Saved plots and results for ", results_name, " at ", save_path)
-  
-  return(
-    list(
-      df_mse = df_mse,
-      df_freq = df_freq,
-      df_lambda_1se = df_lambda_1se
-    )
-  )
-}
-
-fit_elastic_net_train <- function(x, y, alpha_val = 0.5, family = "gaussian") {
-  
-  x <- x %>% as.matrix()
-  
-  # Fit model
-  fit <- cv.glmnet(
-    x, y,
-    type.measure = "mse",
-    alpha        = alpha_val,
-    family       = family
-  )
-  
-  # Extract non-zero coefficients (excluding intercept)
-  
-  coef_matrix    <- as.matrix(coef(fit, s = "lambda.1se"))
-  non_zero_coefs <- rownames(coef_matrix)[coef_matrix[, 1] != 0]
-  non_zero_coefs <- setdiff(non_zero_coefs, "(Intercept)")
-  selected_predictors <- non_zero_coefs
-  
-  return(list(
-    fit         = fit,
-    coef_matrix = coef_matrix,
-    predictors  = selected_predictors
-  ))
-}
-
 fit_elastic_net <- function(x, y, alpha_val, lambda_val, family = "gaussian") {
   
   x <- x %>% as.matrix()
@@ -605,8 +347,6 @@ fit_elastic_net <- function(x, y, alpha_val, lambda_val, family = "gaussian") {
     predictors  = selected_predictors
   ))
 }
-
-
 
 
 bootstrap_feature_importance <- function(x, y, alpha_val, lambda_val, family = "gaussian",
