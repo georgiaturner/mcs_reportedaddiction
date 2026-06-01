@@ -75,7 +75,7 @@ plot_mds_variable_correlations <- function(
   cor_train_filtered <- cor_train[common_vars, , drop = FALSE]
   cor_test_reordered <- cor_test[common_vars, , drop = FALSE]
   
-  # ✅ Step 5: Compute importance and optionally select top N variables
+  # Step 5: Compute importance and optionally select top N variables
   importance_train <- rowSums(abs(cor_train_filtered))
   importance_test  <- rowSums(abs(cor_test_reordered))
   importance_mean  <- (importance_train + importance_test) / 2
@@ -95,7 +95,7 @@ plot_mds_variable_correlations <- function(
     importance_mean <- importance_mean[ordered_vars]
   }
   
-  # ✅ Step 6: Optionally rename variables using mapping
+  # Step 6: Optionally rename variables using mapping
   if (rename_vars && !is.null(var_name_map)) {
     # Expect var_name_map as a *named vector or list* where names = old, values = new
     old_names <- rownames(cor_train_filtered)
@@ -120,7 +120,7 @@ plot_mds_variable_correlations <- function(
   grid.newpage()
   grid.draw(gridExtra::arrangeGrob(p1[[4]], p2[[4]], ncol = 2))
   
-  # ✅ Step 9: Return numerical results
+  # Step 9: Return numerical results
   return(list(
     cor_train = cor_train_filtered,
     cor_test = cor_test_reordered,
@@ -146,7 +146,7 @@ plot_mds_clusters <- function(
   
   # Base plot
   p <- ggplot(mds_df, aes(x = Dim1, y = Dim2, color = Cluster)) +
-    # geom_point(aes(alpha = 1 - Uncertainty), size = 3) +
+    # geom_point(aes(alpha = 1 - Uncertainty), siz30e = 3) +
     geom_point(aes(alpha = 1), size = 3) +
     
     stat_ellipse(aes(group = Cluster), color = "black", linetype = "dashed", linewidth = 1) +

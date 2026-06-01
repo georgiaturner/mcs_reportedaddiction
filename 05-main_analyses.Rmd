@@ -27,10 +27,11 @@ library(mclust) # for gaussian mixture modelling
 library(fclust) # for fuzzy clustering
 library(glmnet)
 library(fastDummies)
-library(officer)
+libraryt
+
 library(flextable)
 library(gridExtra)
-library(grid)
+library(grid)citation
 library(ellipse)
 library(rstatix)
 library(purrr)
